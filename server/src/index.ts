@@ -1,0 +1,40 @@
+import express from 'express';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import { env } from './config/env';
+import { apiRouter } from './routes';
+import { errorHandler, notFound } from './middleware/error';
+import { startScheduler } from './jobs/scheduler';
+import { ping } from './db/pool';
+
+const app = express();
+
+app.set('trust proxy', 1);
+app.use(
+  cors({
+    origin: env.clientUrl,
+    credentials: true,
+  }),
+);
+app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
+
+app.use('/api', apiRouter);
+
+app.use(notFound);
+app.use(errorHandler);
+
+async function start(): Promise<void> {
+  try {
+    await ping();
+    console.log(`[db] connected to ${env.db.database}@${env.db.host}:${env.db.port}`);
+  } catch (err) {
+    console.warn('[db] could not connect at startup — did you run migrations?', (err as Error).message);
+  }
+  app.listen(env.port, () => {
+    console.log(`[server] Visitors API listening on http://localhost:${env.port} (${env.nodeEnv})`);
+    startScheduler();
+  });
+}
+
+start();

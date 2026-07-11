@@ -1,0 +1,150 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode (toggle via <html class="dark">) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Design tokens — "Adriatic" palette.
+  Trust-forward teal (the sea/coast) as brand, warm amber as accent, and a
+  dedicated fiscal-status ramp (success / warning / danger) used across the app
+  for JIR / pending / error badges. Defined as raw CSS variables here and
+  mapped into Tailwind's theme below so every value is theme-switchable at
+  runtime with no rebuild.
+*/
+:root {
+  --background: #f5f7f6;
+  --surface: #ffffff;
+  --surface-2: #eef2f0;
+  --foreground: #12201d;
+  --muted: #5c6b67;
+  --muted-2: #8a9793;
+  --border: #e0e6e3;
+  --input: #d6ddda;
+  --ring: #0e7c6b;
+
+  --primary: #0e7c6b;
+  --primary-hover: #0b6759;
+  --primary-foreground: #ffffff;
+
+  --accent: #cf8420;
+  --accent-foreground: #ffffff;
+
+  --success: #157f52;
+  --success-soft: #e3f3ea;
+  --warning: #b7791f;
+  --warning-soft: #f8efd8;
+  --danger: #c1352f;
+  --danger-soft: #fae5e3;
+  --info: #2563a8;
+  --info-soft: #e2edf8;
+
+  --shadow-color: 210 20% 30%;
+}
+
+.dark {
+  --background: #0b1211;
+  --surface: #121b19;
+  --surface-2: #18231f;
+  --foreground: #e8eeeb;
+  --muted: #98a5a0;
+  --muted-2: #6f7d78;
+  --border: #24312d;
+  --input: #2c3a35;
+  --ring: #2fb39b;
+
+  --primary: #2fb39b;
+  --primary-hover: #3fc2ab;
+  --primary-foreground: #05100d;
+
+  --accent: #e6a94e;
+  --accent-foreground: #1a1205;
+
+  --success: #35b877;
+  --success-soft: #10241b;
+  --warning: #e0a83f;
+  --warning-soft: #241d0e;
+  --danger: #e5645d;
+  --danger-soft: #26130f;
+  --info: #5aa0e0;
+  --info-soft: #0e1c29;
+
+  --shadow-color: 200 40% 3%;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+
+  --font-sans:
+    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Safe-area padding for notched phones / installed PWA */
+    min-height: 100dvh;
+  }
+  /* Tabular figures for money and counts */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .safe-b {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-t {
+    padding-top: env(safe-area-inset-top);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
