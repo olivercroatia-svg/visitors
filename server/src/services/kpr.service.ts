@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import ExcelJS from 'exceljs';
 import path from 'path';
 import { pool } from '../db/pool';
 
@@ -56,6 +57,49 @@ export function kprCsv(entries: KprEntry[]): string {
       .join(';'),
   );
   return '﻿' + [header.map((h) => `"${h}"`).join(';'), ...rows].join('\r\n');
+}
+
+// Native .xlsx — amounts are real numbers (Excel applies the user's locale), so
+// it opens cleanly on desktop and mobile (Excel / Numbers / Sheets).
+export async function renderKprXlsx(entries: KprEntry[], profileName: string, year: number): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Visitors';
+  const ws = wb.addWorksheet(`KPR ${year}`);
+
+  ws.mergeCells('A1:H1');
+  const title = ws.getCell('A1');
+  title.value = `Knjiga prometa (KPR) — ${year}`;
+  title.font = { bold: true, size: 14 };
+  ws.getCell('A2').value = profileName;
+
+  ws.columns = [
+    { key: 'rb', width: 6 },
+    { key: 'datum', width: 12 },
+    { key: 'broj', width: 14 },
+    { key: 'opis', width: 30 },
+    { key: 'gotovina', width: 13 },
+    { key: 'bezgot', width: 15 },
+    { key: 'ukupno', width: 13 },
+    { key: 'kumulativ', width: 14 },
+  ];
+
+  const head = ws.addRow(['Rb', 'Datum', 'Broj računa', 'Opis', 'Gotovina', 'Bezgotovinski', 'Ukupno', 'Kumulativ']);
+  head.font = { bold: true };
+  const MONEY = '#,##0.00 "€"';
+  for (const e of entries) {
+    const row = ws.addRow([e.rb, fmtDate(e.date), e.number_full, e.description, e.cash, e.cashless, e.total, e.cumulative]);
+    ['E', 'F', 'G', 'H'].forEach((col) => (row.getCell(col).numFmt = MONEY));
+  }
+
+  const totalCash = entries.reduce((s, e) => s + e.cash, 0);
+  const totalCashless = entries.reduce((s, e) => s + e.cashless, 0);
+  const grand = entries.reduce((s, e) => s + e.total, 0);
+  const totals = ws.addRow(['', '', '', 'UKUPNO', totalCash, totalCashless, grand, '']);
+  totals.font = { bold: true };
+  ['E', 'F', 'G'].forEach((col) => (totals.getCell(col).numFmt = MONEY));
+
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
 }
 
 export async function renderKprPdf(

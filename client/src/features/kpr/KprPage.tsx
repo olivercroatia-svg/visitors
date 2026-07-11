@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Download, FileText, BookText } from 'lucide-react';
+import { ArrowLeft, Download, FileText, FileSpreadsheet, BookText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Input';
-import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
+import { api, ApiError } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { formatEur, formatDate } from '@/lib/utils';
 
 interface KprEntry {
@@ -32,6 +34,15 @@ export function KprPage() {
     (a, e) => ({ cash: a.cash + e.cash, cashless: a.cashless + e.cashless, total: a.total + e.total }),
     { cash: 0, cashless: 0, total: 0 },
   );
+  const { showError } = useToast();
+
+  async function save(kind: 'xlsx' | 'csv') {
+    try {
+      await downloadFile(`/kpr/${kind}?year=${year}`, `kpr-${year}.${kind}`);
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Preuzimanje nije uspjelo.');
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -61,12 +72,18 @@ export function KprPage() {
         >
           <FileText className="h-4 w-4" /> PDF
         </a>
-        <a
-          href={`/api/kpr/csv?year=${year}`}
+        <button
+          onClick={() => save('xlsx')}
           className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface text-sm font-medium text-foreground hover:bg-surface-2"
         >
-          <Download className="h-4 w-4" /> Excel / CSV
-        </a>
+          <FileSpreadsheet className="h-4 w-4" /> Excel
+        </button>
+        <button
+          onClick={() => save('csv')}
+          className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface text-sm font-medium text-foreground hover:bg-surface-2"
+        >
+          <Download className="h-4 w-4" /> CSV
+        </button>
       </div>
 
       {entries.length === 0 ? (

@@ -13,6 +13,9 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
+import { downloadFile } from '@/lib/download';
+import { ApiError } from '@/lib/api';
 import { formatEur, cn } from '@/lib/utils';
 import { usePremises } from '@/features/settings/api';
 import { useAnalytics, buildQuery, PAYMENT_LABEL, CATEGORY_LABEL, type AnalyticsFilters } from './api';
@@ -65,6 +68,15 @@ export function AnalyticsPage() {
 
   const { data: a, isLoading } = useAnalytics(filters);
   const qs = buildQuery(filters);
+  const { showError } = useToast();
+
+  async function save(ext: 'xlsx' | 'csv') {
+    try {
+      await downloadFile(`/analytics/export.${ext}${qs}`, `analitika.${ext}`);
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Preuzimanje nije uspjelo.');
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -139,8 +151,8 @@ export function AnalyticsPage() {
 
       {/* Exports */}
       <div className="flex gap-2">
-        <ExportLink href={`/api/analytics/export.xlsx${qs}`} icon={<FileSpreadsheet className="h-4 w-4" />} label="Excel" />
-        <ExportLink href={`/api/analytics/export.csv${qs}`} icon={<Download className="h-4 w-4" />} label="CSV" />
+        <ExportButton onClick={() => save('xlsx')} icon={<FileSpreadsheet className="h-4 w-4" />} label="Excel" />
+        <ExportButton onClick={() => save('csv')} icon={<Download className="h-4 w-4" />} label="CSV" />
         <ExportLink href={`/api/analytics/export.pdf${qs}`} icon={<FileText className="h-4 w-4" />} label="PDF" newTab />
       </div>
 
@@ -292,5 +304,16 @@ function ExportLink({ href, icon, label, newTab }: { href: string; icon: React.R
     >
       {icon} {label}
     </a>
+  );
+}
+
+function ExportButton({ onClick, icon, label }: { onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface text-sm font-medium text-foreground transition-colors hover:bg-surface-2"
+    >
+      {icon} {label}
+    </button>
   );
 }

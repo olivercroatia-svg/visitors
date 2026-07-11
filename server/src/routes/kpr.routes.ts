@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
-import { getKprEntries, kprCsv, renderKprPdf } from '../services/kpr.service';
+import { getKprEntries, kprCsv, renderKprPdf, renderKprXlsx } from '../services/kpr.service';
 
 export const kprRouter = Router();
 kprRouter.use(requireAuth);
@@ -18,6 +18,22 @@ kprRouter.get(
     const year = yearOf(req);
     const entries = await getKprEntries(req.auth!.tenantId, year);
     res.json({ year, entries });
+  }),
+);
+
+kprRouter.get(
+  '/xlsx',
+  wrap(async (req, res) => {
+    const year = yearOf(req);
+    const [[profile]] = await pool.query<any[]>(
+      `SELECT legal_name FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
+      [req.auth!.tenantId],
+    );
+    const entries = await getKprEntries(req.auth!.tenantId, year);
+    const buf = await renderKprXlsx(entries, profile?.legal_name ?? '', year);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="kpr-${year}.xlsx"`);
+    res.send(buf);
   }),
 );
 
