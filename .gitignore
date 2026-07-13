@@ -11,3 +11,7 @@ client/dev-dist/
 server/dist/
 *.tsbuildinfo
 .remember/
+
+# HTZ eVisitor reference material — contains test-environment credentials.
+# Local only: the repo is public.
+API VISITOR/
