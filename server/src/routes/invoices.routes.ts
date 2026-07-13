@@ -13,10 +13,14 @@ import {
   InvoiceError,
   type DraftInput,
 } from '../services/invoice.service';
+import { PricingError } from '../services/pricing.service';
 import { renderInvoicePdf } from '../services/pdf.service';
 
 export const invoicesRouter = Router();
 invoicesRouter.use(requireAuth);
+
+const discountType = z.enum(['none', 'percent', 'amount']).optional();
+const discountValue = z.number().nonnegative('Popust ne može biti negativan.').optional();
 
 const itemSchema = z.object({
   description: z.string().min(1, 'Unesite opis stavke.').max(255),
@@ -24,22 +28,37 @@ const itemSchema = z.object({
   unit: z.string().min(1).max(30),
   unit_price: z.number().nonnegative('Cijena ne može biti negativna.'),
   vat_category: z.string().min(1).max(60),
+  discount_type: discountType,
+  discount_value: discountValue,
 });
 
-const draftSchema = z.object({
-  premise_id: z.number().int().positive(),
-  device_id: z.number().int().positive(),
-  guest_id: z.number().int().positive().nullable().optional(),
-  guest_name: z.string().max(240).nullable().optional(),
-  company_id: z.number().int().positive().nullable().optional(),
-  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  payment_method: z.enum(['gotovina', 'kartica', 'transakcijski', 'ostalo']),
-  note: z.string().max(500).nullable().optional(),
-  items: z.array(itemSchema).min(1, 'Dodajte barem jednu stavku.'),
-});
+const draftSchema = z
+  .object({
+    premise_id: z.number().int().positive(),
+    device_id: z.number().int().positive(),
+    guest_id: z.number().int().positive().nullable().optional(),
+    guest_name: z.string().max(240).nullable().optional(),
+    company_id: z.number().int().positive().nullable().optional(),
+    due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    payment_method: z.enum(['gotovina', 'kartica', 'transakcijski', 'ostalo']),
+    note: z.string().max(500).nullable().optional(),
+    discount_type: discountType,
+    discount_value: discountValue,
+    items: z.array(itemSchema).min(1, 'Dodajte barem jednu stavku.'),
+  })
+  // A discount is either per line or on the whole invoice — never both. Allowing both
+  // would mean discounting a discount, which nobody can reconcile off the printed page.
+  .refine(
+    (d) => {
+      const onInvoice = d.discount_type && d.discount_type !== 'none' && (d.discount_value ?? 0) > 0;
+      const onLines = d.items.some((i) => i.discount_type && i.discount_type !== 'none' && (i.discount_value ?? 0) > 0);
+      return !(onInvoice && onLines);
+    },
+    { message: 'Popust je moguć ili po stavkama ili na cijeli račun — ne oboje.' },
+  );
 
 function handleInvoiceError(err: unknown, res: import('express').Response): boolean {
-  if (err instanceof InvoiceError) {
+  if (err instanceof InvoiceError || err instanceof PricingError) {
     res.status(err.status).json({ error: err.message });
     return true;
   }

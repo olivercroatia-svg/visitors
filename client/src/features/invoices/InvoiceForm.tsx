@@ -13,16 +13,23 @@ import { useAuth } from '@/features/auth/AuthProvider';
 import { usePremises, useServices, useCompanies, VAT_CATEGORIES, SERVICE_UNITS } from '@/features/settings/api';
 import { CompanyModal } from '@/features/settings/CompaniesSection';
 import type { Guest } from '@/features/guests/GuestsPage';
-import { useIssueInvoice, PAYMENT_METHODS, type NewInvoiceItem, type PaymentMethod } from './api';
+import {
+  useIssueInvoice,
+  PAYMENT_METHODS,
+  type NewInvoiceItem,
+  type PaymentMethod,
+  type DiscountType,
+} from './api';
+import { computePreview, round2, type Preview, type PreviewLine } from './pricing';
 
 interface Row extends NewInvoiceItem {
   key: number;
 }
 let rowKey = 1;
 
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
+// A discount is either per line or on the whole invoice — never both (the server
+// rejects the combination). This selector is what enforces that at the source.
+type DiscountMode = 'none' | 'lines' | 'invoice';
 
 export function InvoiceForm() {
   const navigate = useNavigate();
@@ -45,6 +52,9 @@ export function InvoiceForm() {
   const [note, setNote] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [discountMode, setDiscountMode] = useState<DiscountMode>('none');
+  const [invoiceDiscountType, setInvoiceDiscountType] = useState<Exclude<DiscountType, 'none'>>('percent');
+  const [invoiceDiscountValue, setInvoiceDiscountValue] = useState('');
 
   // Default to the first premise + its first device.
   useEffect(() => {
@@ -63,7 +73,16 @@ export function InvoiceForm() {
   function addBlankRow() {
     setRows((r) => [
       ...r,
-      { key: rowKey++, description: '', quantity: 1, unit: 'noć', unit_price: 0, vat_category: 'smjestaj' },
+      {
+        key: rowKey++,
+        description: '',
+        quantity: 1,
+        unit: 'noć',
+        unit_price: 0,
+        vat_category: 'smjestaj',
+        discount_type: 'none',
+        discount_value: 0,
+      },
     ]);
   }
   function addServiceRow(serviceId: number) {
@@ -78,6 +97,8 @@ export function InvoiceForm() {
         unit: s.unit,
         unit_price: Number(s.default_price),
         vat_category: s.vat_category,
+        discount_type: 'none',
+        discount_value: 0,
       },
     ]);
   }
@@ -88,23 +109,35 @@ export function InvoiceForm() {
     setRows((r) => r.filter((row) => row.key !== key));
   }
 
-  const totals = useMemo(() => {
-    let subtotal = 0;
-    let vat = 0;
-    for (const it of rows) {
-      const base = round2(it.quantity * it.unit_price);
-      const rate = vatApplicable ? VAT_CATEGORIES.find((c) => c.value === it.vat_category)?.rate ?? 0 : 0;
-      subtotal += base;
-      vat += round2((base * rate) / 100);
+  // Switching mode clears the discounts the other mode owns, so the payload can never
+  // carry both (which the server rejects) and the preview can never lie.
+  function changeDiscountMode(mode: DiscountMode) {
+    setDiscountMode(mode);
+    if (mode !== 'invoice') setInvoiceDiscountValue('');
+    if (mode !== 'lines') {
+      setRows((r) => r.map((row) => ({ ...row, discount_type: 'none', discount_value: 0 })));
     }
-    return { subtotal: round2(subtotal), vat: round2(vat), total: round2(subtotal + vat) };
-  }, [rows, vatApplicable]);
+  }
+
+  const invoiceDiscount = useMemo(
+    () => ({
+      type: discountMode === 'invoice' ? invoiceDiscountType : ('none' as DiscountType),
+      value: discountMode === 'invoice' ? Number(invoiceDiscountValue.replace(',', '.')) || 0 : 0,
+    }),
+    [discountMode, invoiceDiscountType, invoiceDiscountValue],
+  );
+
+  const preview = useMemo(
+    () => computePreview(rows, vatApplicable, invoiceDiscount),
+    [rows, vatApplicable, invoiceDiscount],
+  );
 
   const canSubmit =
     premiseId != null &&
     deviceId != null &&
     rows.length > 0 &&
-    rows.every((r) => r.description.trim() && r.quantity > 0);
+    rows.every((r) => r.description.trim() && r.quantity > 0) &&
+    preview.error == null;
 
   async function submit() {
     if (!canSubmit || premiseId == null || deviceId == null) return;
@@ -118,12 +151,16 @@ export function InvoiceForm() {
         company_id: companyId,
         payment_method: payment,
         note: note.trim() || null,
-        items: rows.map(({ description, quantity, unit, unit_price, vat_category }) => ({
+        discount_type: invoiceDiscount.type,
+        discount_value: invoiceDiscount.value,
+        items: rows.map(({ description, quantity, unit, unit_price, vat_category, discount_type, discount_value }) => ({
           description,
           quantity,
           unit,
           unit_price,
           vat_category,
+          discount_type,
+          discount_value,
         })),
       });
       navigate(`/racuni/${invoice.id}`, { replace: true });
@@ -227,15 +264,77 @@ export function InvoiceForm() {
           </p>
         )}
 
-        {rows.map((row) => (
+        {rows.map((row, i) => (
           <ItemRow
             key={row.key}
             row={row}
             vatApplicable={vatApplicable}
+            showDiscount={discountMode === 'lines'}
+            line={preview.lines[i]}
             onChange={(patch) => updateRow(row.key, patch)}
             onRemove={() => removeRow(row.key)}
           />
         ))}
+      </Card>
+
+      {/* Popust */}
+      <Card className="space-y-3 p-4">
+        <p className="text-sm font-semibold text-foreground">Popust</p>
+        <div className="grid grid-cols-3 gap-2">
+          {(
+            [
+              { value: 'none', label: 'Bez popusta' },
+              { value: 'lines', label: 'Po stavkama' },
+              { value: 'invoice', label: 'Na cijeli račun' },
+            ] as { value: DiscountMode; label: string }[]
+          ).map((m) => (
+            <button
+              key={m.value}
+              onClick={() => changeDiscountMode(m.value)}
+              className={cn(
+                'rounded-xl border px-2 py-2 text-xs font-medium transition-colors',
+                discountMode === m.value
+                  ? 'border-primary bg-primary/5 text-primary ring-1 ring-primary'
+                  : 'border-border text-muted hover:bg-surface-2',
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {discountMode === 'lines' && (
+          <p className="text-xs text-muted">Popust upišite na svakoj stavci iznad.</p>
+        )}
+
+        {discountMode === 'invoice' && (
+          <Field
+            label="Popust na cijeli račun"
+            hint="Razmjerno se raspoređuje po stavkama, pa PDV ostaje ispravan po svakoj stopi."
+          >
+            <div className="flex gap-2">
+              <Input
+                inputMode="decimal"
+                value={invoiceDiscountValue}
+                onChange={(e) => setInvoiceDiscountValue(e.target.value.replace(/[^0-9.,]/g, ''))}
+                placeholder={invoiceDiscountType === 'percent' ? '10' : '25,00'}
+                className="flex-1"
+                autoFocus
+              />
+              <DiscountTypeToggle value={invoiceDiscountType} onChange={setInvoiceDiscountType} />
+            </div>
+          </Field>
+        )}
+
+        {preview.error && <p className="text-xs text-danger">⚠ {preview.error}</p>}
+
+        {preview.discount_total > 0 && !preview.error && (
+          <div className="space-y-1 rounded-xl bg-surface-2 p-3 text-xs">
+            <Line label="Osnovica prije popusta" value={formatEur(preview.subtotal_gross)} />
+            <Line label="Popust" value={`−${formatEur(preview.discount_total)}`} />
+            <Line label="Osnovica" value={formatEur(preview.subtotal)} />
+          </div>
+        )}
       </Card>
 
       {/* Plaćanje */}
@@ -269,7 +368,7 @@ export function InvoiceForm() {
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-3">
           <div>
             <p className="text-xs text-muted">Ukupno{vatApplicable ? ' (s PDV-om)' : ''}</p>
-            <p className="text-lg font-semibold text-foreground tnum">{formatEur(totals.total)}</p>
+            <p className="text-lg font-semibold text-foreground tnum">{formatEur(preview.total)}</p>
           </div>
           <Button onClick={() => setConfirmOpen(true)} disabled={!canSubmit} size="lg">
             Pregledaj i izdaj <ChevronRight className="h-4 w-4" />
@@ -282,7 +381,7 @@ export function InvoiceForm() {
         onClose={() => setConfirmOpen(false)}
         onConfirm={submit}
         loading={issue.isPending}
-        totals={totals}
+        preview={preview}
         vatApplicable={vatApplicable}
         rows={rows}
         guestName={guests?.find((g) => g.id === guestId)?.first_name}
@@ -295,15 +394,21 @@ export function InvoiceForm() {
 function ItemRow({
   row,
   vatApplicable,
+  showDiscount,
+  line,
   onChange,
   onRemove,
 }: {
   row: Row;
   vatApplicable: boolean;
+  showDiscount: boolean;
+  line?: PreviewLine;
   onChange: (patch: Partial<Row>) => void;
   onRemove: () => void;
 }) {
-  const lineBase = round2(row.quantity * row.unit_price);
+  const gross = round2(row.quantity * row.unit_price);
+  const discount = line?.discount_amount ?? 0;
+  const lineBase = line?.line_base ?? gross;
   return (
     <div className="rounded-xl border border-border p-3">
       <div className="mb-2 flex items-start gap-2">
@@ -321,7 +426,7 @@ function ItemRow({
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className={cn('grid grid-cols-2 gap-2', showDiscount ? 'sm:grid-cols-5' : 'sm:grid-cols-4')}>
         <Field label="Količina">
           <Input
             inputMode="decimal"
@@ -345,6 +450,28 @@ function ItemRow({
             onChange={(e) => onChange({ unit_price: Number(e.target.value.replace(',', '.')) || 0 })}
           />
         </Field>
+        {showDiscount && (
+          <Field label="Popust">
+            <div className="flex gap-1">
+              <Input
+                inputMode="decimal"
+                value={row.discount_value ? String(row.discount_value) : ''}
+                onChange={(e) =>
+                  onChange({
+                    discount_value: Number(e.target.value.replace(',', '.')) || 0,
+                    discount_type: row.discount_type === 'none' ? 'percent' : row.discount_type,
+                  })
+                }
+                placeholder={row.discount_type === 'amount' ? '25,00' : '10'}
+                className="min-w-0 flex-1"
+              />
+              <DiscountTypeToggle
+                value={row.discount_type === 'amount' ? 'amount' : 'percent'}
+                onChange={(t) => onChange({ discount_type: t })}
+              />
+            </div>
+          </Field>
+        )}
         <Field label="PDV">
           <Select
             value={row.vat_category}
@@ -360,8 +487,42 @@ function ItemRow({
         </Field>
       </div>
       <p className="mt-2 text-right text-xs text-muted">
+        {discount > 0 && (
+          <>
+            <span className="tnum line-through">{formatEur(gross)}</span>{' '}
+            <span className="tnum text-danger">−{formatEur(discount)}</span> ·{' '}
+          </>
+        )}
         Osnovica: <span className="tnum font-medium text-foreground">{formatEur(lineBase)}</span>
       </p>
+    </div>
+  );
+}
+
+// Small %/€ switch. Used on each line and on the whole-invoice discount.
+function DiscountTypeToggle({
+  value,
+  onChange,
+}: {
+  value: Exclude<DiscountType, 'none'>;
+  onChange: (t: Exclude<DiscountType, 'none'>) => void;
+}) {
+  return (
+    <div className="flex h-11 shrink-0 overflow-hidden rounded-xl border border-input">
+      {(['percent', 'amount'] as const).map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={() => onChange(t)}
+          aria-pressed={value === t}
+          className={cn(
+            'w-9 text-sm font-medium transition-colors',
+            value === t ? 'bg-primary/10 text-primary' : 'text-muted hover:bg-surface-2',
+          )}
+        >
+          {t === 'percent' ? '%' : '€'}
+        </button>
+      ))}
     </div>
   );
 }
@@ -371,7 +532,7 @@ function ConfirmIssueModal({
   onClose,
   onConfirm,
   loading,
-  totals,
+  preview,
   vatApplicable,
   rows,
   guestName,
@@ -381,7 +542,7 @@ function ConfirmIssueModal({
   onClose: () => void;
   onConfirm: () => void;
   loading: boolean;
-  totals: { subtotal: number; vat: number; total: number };
+  preview: Preview;
   vatApplicable: boolean;
   rows: Row[];
   guestName?: string;
@@ -413,21 +574,30 @@ function ConfirmIssueModal({
               <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
                 <span className="min-w-0 flex-1 truncate text-foreground">
                   {r.description || 'Stavka'} · {r.quantity} {r.unit}
+                  {(preview.lines[i]?.discount_amount ?? 0) > 0 && (
+                    <span className="text-danger"> · popust −{formatEur(preview.lines[i].discount_amount)}</span>
+                  )}
                 </span>
-                <span className="tnum text-muted">{formatEur(round2(r.quantity * r.unit_price))}</span>
+                <span className="tnum text-muted">{formatEur(preview.lines[i]?.line_base ?? 0)}</span>
               </div>
             ))}
           </div>
           <div className="border-t border-border px-3 py-2 text-sm">
+            {preview.discount_total > 0 && (
+              <>
+                <Line label="Osnovica prije popusta" value={formatEur(preview.subtotal_gross)} />
+                <Line label="Popust" value={`−${formatEur(preview.discount_total)}`} />
+              </>
+            )}
             {vatApplicable && (
               <>
-                <Line label="Osnovica" value={formatEur(totals.subtotal)} />
-                <Line label="PDV" value={formatEur(totals.vat)} />
+                <Line label="Osnovica" value={formatEur(preview.subtotal)} />
+                <Line label="PDV" value={formatEur(preview.vat)} />
               </>
             )}
             <div className="mt-1 flex items-center justify-between font-semibold text-foreground">
               <span>Ukupno</span>
-              <span className="tnum">{formatEur(totals.total)}</span>
+              <span className="tnum">{formatEur(preview.total)}</span>
             </div>
           </div>
         </div>

@@ -105,13 +105,20 @@ export async function renderInvoicePdf(invoice: any, profile: Profile): Promise<
 
   y += bandH;
 
-  // Items table
-  const cols = { desc: left, qty: 300, price: 350, vat: 425, total: 480 };
+  // Items table. The "Popust" column only exists when the invoice actually has a
+  // discount — otherwise the original 5-column grid is used unchanged, so an invoice
+  // without a discount renders exactly as it did before this feature.
+  const hasDiscount = Number(invoice.discount_total ?? 0) !== 0;
+  const cols = hasDiscount
+    ? { desc: left, qty: 268, price: 315, discount: 380, vat: 445, vatW: 40, total: 490 }
+    : { desc: left, qty: 300, price: 350, discount: 0, vat: 425, vatW: 45, total: 480 };
+
   doc.font('b').fontSize(8.5).fillColor('#5c6b67');
   doc.text('Opis', cols.desc, y);
   doc.text('Kol.', cols.qty, y, { width: 40, align: 'right' });
   doc.text('Cijena', cols.price, y, { width: 60, align: 'right' });
-  doc.text('PDV', cols.vat, y, { width: 45, align: 'right' });
+  if (hasDiscount) doc.text('Popust', cols.discount, y, { width: 60, align: 'right' });
+  doc.text('PDV', cols.vat, y, { width: cols.vatW, align: 'right' });
   doc.text('Iznos', cols.total, y, { width: right - cols.total, align: 'right' });
   y += 14;
   doc.moveTo(left, y).lineTo(right, y).strokeColor('#e0e6e3').stroke();
@@ -123,7 +130,10 @@ export async function renderInvoicePdf(invoice: any, profile: Profile): Promise<
     doc.fillColor('#12201d').text(it.description, cols.desc, y, { width: cols.qty - cols.desc - 8 });
     doc.text(`${trimNum(it.quantity)} ${it.unit}`, cols.qty, y, { width: 40, align: 'right' });
     doc.text(money(it.unit_price), cols.price, y, { width: 60, align: 'right' });
-    doc.text(invoice.vat_applicable ? `${trimNum(it.vat_rate)}%` : '—', cols.vat, y, { width: 45, align: 'right' });
+    if (hasDiscount) {
+      doc.text(lineDiscountLabel(it), cols.discount, y, { width: 60, align: 'right' });
+    }
+    doc.text(invoice.vat_applicable ? `${trimNum(it.vat_rate)}%` : '—', cols.vat, y, { width: cols.vatW, align: 'right' });
     doc.text(money(it.line_total), cols.total, y, { width: right - cols.total, align: 'right' });
     y += rowH + 4;
   }
@@ -131,19 +141,39 @@ export async function renderInvoicePdf(invoice: any, profile: Profile): Promise<
   doc.moveTo(left, y).lineTo(right, y).strokeColor('#e0e6e3').stroke();
   y += 10;
 
-  // Totals
-  const totalsX = 360;
+  // Totals. Without a discount these coordinates are the original ones, untouched.
+  const totalsX = hasDiscount ? 330 : 360;
+  const labelW = hasDiscount ? 130 : 100;
+
+  // The discount rows render for non-VAT payers too, who get no Osnovica/PDV rows —
+  // otherwise a flat-rate renter's discount would be invisible on the document.
+  if (hasDiscount) {
+    doc.font('r').fontSize(9.5).fillColor('#5c6b67');
+    doc.text('Osnovica prije popusta:', totalsX, y, { width: labelW, align: 'right' });
+    doc.fillColor('#12201d').text(money(invoice.subtotal_gross), 460, y, { width: right - 460, align: 'right' });
+    y += 16;
+    doc.fillColor('#5c6b67').text(invoiceDiscountLabel(invoice), totalsX, y, { width: labelW, align: 'right' });
+    doc
+      .fillColor('#12201d')
+      .text(`−${money(Math.abs(Number(invoice.discount_total)))}`, 460, y, { width: right - 460, align: 'right' });
+    y += 16;
+    if (!invoice.vat_applicable) {
+      doc.fillColor('#5c6b67').text('Osnovica:', totalsX, y, { width: labelW, align: 'right' });
+      doc.fillColor('#12201d').text(money(invoice.subtotal), 460, y, { width: right - 460, align: 'right' });
+      y += 16;
+    }
+  }
   if (invoice.vat_applicable) {
     doc.font('r').fontSize(9.5).fillColor('#5c6b67');
-    doc.text('Osnovica:', totalsX, y, { width: 100, align: 'right' });
+    doc.text('Osnovica:', totalsX, y, { width: labelW, align: 'right' });
     doc.fillColor('#12201d').text(money(invoice.subtotal), 460, y, { width: right - 460, align: 'right' });
     y += 16;
-    doc.fillColor('#5c6b67').text('PDV:', totalsX, y, { width: 100, align: 'right' });
+    doc.fillColor('#5c6b67').text('PDV:', totalsX, y, { width: labelW, align: 'right' });
     doc.fillColor('#12201d').text(money(invoice.vat_total), 460, y, { width: right - 460, align: 'right' });
     y += 16;
   }
   doc.font('b').fontSize(12).fillColor('#0e7c6b');
-  doc.text('UKUPNO:', totalsX, y, { width: 100, align: 'right' });
+  doc.text('UKUPNO:', totalsX, y, { width: labelW, align: 'right' });
   doc.text(money(invoice.total), 455, y, { width: right - 455, align: 'right' });
   y += 26;
 
@@ -200,6 +230,23 @@ function fmtDate(d?: string | null): string {
   const s = String(d).slice(0, 10);
   const [y, m, day] = s.split('-');
   return `${day}.${m}.${y}.`;
+}
+
+// A line's own percentage discount prints as "−10%"; anything else (a fixed amount, or
+// a share of a whole-invoice discount pushed down into this line) prints in euros, which
+// always reconciles against the line. Storno amounts are negative — show the magnitude,
+// the reversal is already visible in the Iznos and UKUPNO columns.
+function lineDiscountLabel(it: any): string {
+  const amount = Number(it.discount_amount ?? 0);
+  if (amount === 0) return '—';
+  if (it.discount_type === 'percent') return `−${trimNum(it.discount_value)}%`;
+  return `−${money(Math.abs(amount))}`;
+}
+
+function invoiceDiscountLabel(invoice: any): string {
+  return invoice.discount_type === 'percent'
+    ? `Popust (${trimNum(invoice.discount_value)}%):`
+    : 'Popust:';
 }
 
 // Country is free text (same as guests.country), so match the spellings the app

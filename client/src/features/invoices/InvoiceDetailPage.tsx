@@ -183,6 +183,13 @@ export function InvoiceDetailPage() {
                 <p className="text-sm text-foreground">{it.description}</p>
                 <p className="text-xs text-muted">
                   {trimNum(it.quantity)} {it.unit} × {formatEur(Number(it.unit_price))}
+                  {Number(it.discount_amount) !== 0 && (
+                    <span className="text-danger">
+                      {' '}
+                      · popust {it.discount_type === 'percent' ? `${trimNum(it.discount_value)}%` : ''} −
+                      {formatEur(Math.abs(Number(it.discount_amount)))}
+                    </span>
+                  )}
                   {vatApplicable && ` · PDV ${trimNum(it.vat_rate)}%`}
                 </p>
               </div>
@@ -194,12 +201,19 @@ export function InvoiceDetailPage() {
         </div>
 
         <div className="mt-3 space-y-1 border-t border-border pt-3 text-sm">
-          {vatApplicable && (
+          {Number(inv.discount_total) !== 0 && (
             <>
-              <Row label="Osnovica" value={formatEur(Number(inv.subtotal))} />
-              <Row label="PDV" value={formatEur(Number(inv.vat_total))} />
+              <Row label="Osnovica prije popusta" value={formatEur(Number(inv.subtotal_gross))} />
+              <Row
+                label={inv.discount_type === 'percent' ? `Popust (${trimNum(inv.discount_value)}%)` : 'Popust'}
+                value={`−${formatEur(Math.abs(Number(inv.discount_total)))}`}
+              />
             </>
           )}
+          {(vatApplicable || Number(inv.discount_total) !== 0) && (
+            <Row label="Osnovica" value={formatEur(Number(inv.subtotal))} />
+          )}
+          {vatApplicable && <Row label="PDV" value={formatEur(Number(inv.vat_total))} />}
           <div className="flex items-center justify-between pt-1 text-base font-semibold text-foreground">
             <span>Ukupno</span>
             <span className="tnum">{formatEur(Number(inv.total))}</span>

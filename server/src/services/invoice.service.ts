@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { pool } from '../db/pool';
 import { audit } from './audit.service';
-import { computeTotals, VAT_EXEMPTION_CLAUSE, type LineInput } from './pricing.service';
+import { computeTotals, VAT_EXEMPTION_CLAUSE, type LineInput, type DiscountType } from './pricing.service';
 import { getOnboardingStatus } from './onboarding.service';
 import { resolveVatStatusOnDate } from './vat.service';
 import { getFiscalProvider, type FiscalInvoice } from '../fiscal';
@@ -15,6 +15,10 @@ export interface DraftInput {
   due_date?: string | null;
   payment_method: 'gotovina' | 'kartica' | 'transakcijski' | 'ostalo';
   note?: string | null;
+  // Whole-invoice discount. Mutually exclusive with per-line discounts (enforced
+  // in the route); allocated pro-rata into the lines by computeTotals.
+  discount_type?: DiscountType;
+  discount_value?: number;
   items: LineInput[];
 }
 
@@ -125,8 +129,9 @@ export async function createDraft(tenantId: number, userId: number, input: Draft
                              company_id, company_name_cache, company_oib_cache, company_vat_id_cache,
                              company_address_cache, company_postal_code_cache, company_city_cache,
                              company_country_cache,
+                             discount_type, discount_value,
                              due_date, payment_method, note, status)
-       VALUES (?, 'invoice', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+       VALUES (?, 'invoice', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         tenantId,
         input.premise_id,
@@ -141,6 +146,8 @@ export async function createDraft(tenantId: number, userId: number, input: Draft
         company?.postal_code ?? null,
         company?.city ?? null,
         company?.country ?? null,
+        input.discount_type ?? 'none',
+        input.discount_value ?? 0,
         input.due_date ?? null,
         input.payment_method,
         input.note ?? null,
@@ -164,12 +171,16 @@ export async function createDraft(tenantId: number, userId: number, input: Draft
 async function insertItems(conn: any, tenantId: number, invoiceId: number, items: LineInput[]) {
   let order = 0;
   for (const item of items) {
+    // The line discount is stored as entered; the resolved EUR amount (and any share
+    // of a whole-invoice discount) is only frozen at issue, by computeTotals.
     const base = round2(item.quantity * item.unit_price);
     await conn.query(
       `INSERT INTO invoice_items (invoice_id, tenant_id, description, quantity, unit, unit_price,
+                                  discount_type, discount_value,
                                   vat_category, vat_rate, line_base, line_vat, line_total, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?)`,
       [invoiceId, tenantId, item.description, item.quantity, item.unit, item.unit_price,
+       item.discount_type ?? 'none', item.discount_value ?? 0,
        item.vat_category, base, base, order++],
     );
   }
@@ -225,9 +236,12 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
     const seq = await nextSeq(conn, tenantId, inv.premise_id, inv.device_id, year);
     numberFull = `${seq}/${premise.code}/${device.code}`;
 
-    // Freeze totals with rates effective on the issue date.
+    // Freeze totals with rates effective on the issue date. The discount columns MUST
+    // be read back here and fed into computeTotals — leave them out and the draft
+    // shows a discount that the issued (and fiscalized) invoice silently drops.
     const [items] = await conn.query<any[]>(
-      `SELECT description, quantity, unit, unit_price, vat_category FROM invoice_items WHERE invoice_id = ?`,
+      `SELECT description, quantity, unit, unit_price, vat_category, discount_type, discount_value
+       FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order ASC, id ASC`,
       [invoiceId],
     );
     const computed = await computeTotals(
@@ -237,14 +251,18 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
         unit: it.unit,
         unit_price: Number(it.unit_price),
         vat_category: it.vat_category,
+        discount_type: it.discount_type as DiscountType,
+        discount_value: Number(it.discount_value),
       })),
       vatApplicable,
       issueDate,
+      { type: inv.discount_type as DiscountType, value: Number(inv.discount_value) },
     );
 
     await conn.query(
       `UPDATE invoices SET status='issued', year=?, seq=?, number_full=?, issue_date=?, issue_datetime=?,
-              vat_applicable=?, vat_clause=?, subtotal=?, vat_total=?, total=?, operator_label=?,
+              vat_applicable=?, vat_clause=?, subtotal_gross=?, discount_total=?, subtotal=?,
+              vat_total=?, total=?, operator_label=?,
               fiscal_status='pending'
        WHERE id = ?`,
       [
@@ -255,6 +273,8 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
         dt.dt,
         vatApplicable ? 1 : 0,
         vatApplicable ? null : VAT_EXEMPTION_CLAUSE,
+        computed.subtotal_gross,
+        computed.discount_total,
         computed.subtotal,
         computed.vat_total,
         computed.total,
@@ -269,10 +289,12 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
     for (const l of computed.lines) {
       await conn.query(
         `INSERT INTO invoice_items (invoice_id, tenant_id, description, quantity, unit, unit_price,
+                                    discount_type, discount_value, discount_amount,
                                     vat_category, vat_rate, line_base, line_vat, line_total, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [invoiceId, tenantId, l.description, l.quantity, l.unit, l.unit_price, l.vat_category,
-         l.vat_rate, l.line_base, l.line_vat, l.line_total, order++],
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [invoiceId, tenantId, l.description, l.quantity, l.unit, l.unit_price,
+         l.discount_type ?? 'none', l.discount_value ?? 0, l.discount_amount,
+         l.vat_category, l.vat_rate, l.line_base, l.line_vat, l.line_total, order++],
       );
     }
 
@@ -399,10 +421,11 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
       `INSERT INTO invoices (tenant_id, doc_type, premise_id, device_id, guest_id, guest_name_cache,
               company_id, company_name_cache, company_oib_cache, company_vat_id_cache,
               company_address_cache, company_postal_code_cache, company_city_cache, company_country_cache,
+              discount_type, discount_value, discount_total, subtotal_gross,
               year, seq, number_full, status, issue_date, issue_datetime, payment_method, currency,
               vat_applicable, vat_clause, subtotal, vat_total, total, operator_label, note,
               fiscal_status, cancels_invoice_id)
-       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       [
         tenantId, orig.premise_id, orig.device_id, orig.guest_id, orig.guest_name_cache,
         // Mirror the original's company copy, not the live companies row — the storno
@@ -410,6 +433,10 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
         orig.company_id, orig.company_name_cache, orig.company_oib_cache, orig.company_vat_id_cache,
         orig.company_address_cache, orig.company_postal_code_cache, orig.company_city_cache,
         orig.company_country_cache,
+        // The discount as entered carries over as-is; the resolved euro amounts are
+        // negated like every other amount on a storno.
+        orig.discount_type, orig.discount_value,
+        -Number(orig.discount_total), -Number(orig.subtotal_gross),
         year, seq, numberFull, dt.d, dt.dt, orig.payment_method, orig.currency,
         orig.vat_applicable, orig.vat_clause,
         -Number(orig.subtotal), -Number(orig.vat_total), -Number(orig.total),
@@ -420,15 +447,20 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
     stornoId = stornoRes.insertId;
 
     // Mirror items with negated amounts.
-    const [items] = await conn.query<any[]>(`SELECT * FROM invoice_items WHERE invoice_id = ?`, [originalId]);
+    const [items] = await conn.query<any[]>(
+      `SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order ASC, id ASC`,
+      [originalId],
+    );
     let order = 0;
     for (const it of items) {
       await conn.query(
         `INSERT INTO invoice_items (invoice_id, tenant_id, description, quantity, unit, unit_price,
+                                    discount_type, discount_value, discount_amount,
                                     vat_category, vat_rate, line_base, line_vat, line_total, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stornoId, tenantId, it.description, -Number(it.quantity), it.unit, it.unit_price, it.vat_category,
-         it.vat_rate, -Number(it.line_base), -Number(it.line_vat), -Number(it.line_total), order++],
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stornoId, tenantId, it.description, -Number(it.quantity), it.unit, it.unit_price,
+         it.discount_type, it.discount_value, -Number(it.discount_amount),
+         it.vat_category, it.vat_rate, -Number(it.line_base), -Number(it.line_vat), -Number(it.line_total), order++],
       );
     }
 

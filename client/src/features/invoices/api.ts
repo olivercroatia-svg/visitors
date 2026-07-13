@@ -19,6 +19,8 @@ export interface InvoiceListItem {
   payment_method: PaymentMethod;
 }
 
+export type DiscountType = 'none' | 'percent' | 'amount';
+
 export interface InvoiceItem {
   id: number;
   description: string;
@@ -27,6 +29,9 @@ export interface InvoiceItem {
   unit_price: string;
   vat_category: string;
   vat_rate: string;
+  discount_type: DiscountType;
+  discount_value: string;
+  discount_amount: string;
   line_base: string;
   line_vat: string;
   line_total: string;
@@ -43,6 +48,10 @@ export interface InvoiceDetail {
   payment_method: PaymentMethod;
   vat_applicable: number;
   vat_clause: string | null;
+  discount_type: DiscountType;
+  discount_value: string;
+  discount_total: string;
+  subtotal_gross: string;
   subtotal: string;
   vat_total: string;
   total: string;
@@ -86,6 +95,8 @@ export interface NewInvoiceItem {
   unit: string;
   unit_price: number;
   vat_category: string;
+  discount_type: DiscountType;
+  discount_value: number;
 }
 
 export interface IssueInvoicePayload {
@@ -96,6 +107,8 @@ export interface IssueInvoicePayload {
   company_id?: number | null;
   payment_method: PaymentMethod;
   note?: string | null;
+  discount_type?: DiscountType;
+  discount_value?: number;
   items: NewInvoiceItem[];
 }
 
