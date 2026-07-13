@@ -18,25 +18,71 @@ export interface KprEntry {
   cumulative: number;
 }
 
+export interface KprRange {
+  from?: string; // YYYY-MM-DD, inclusive
+  to?: string; // YYYY-MM-DD, inclusive
+}
+
 // Knjiga prometa (KPR): chronological record of turnover built automatically
 // from issued documents (invoices + storno), split cash / cashless, with a
 // running cumulative — exactly what a flat-rate renter must keep.
-export async function getKprEntries(tenantId: number, year: number): Promise<KprEntry[]> {
+//
+// A date range narrows the WINDOW, not the book: Rb and Kumulativ are still
+// counted from 1 January of `year`, seeded from the entries that fall before
+// `from`. So a given invoice always carries the same ordinal and the same
+// year-to-date cumulative, whichever range you happen to be looking at — which is
+// the number the flat-rate turnover threshold is actually measured against.
+//
+// NOTE: unlike analytics, this deliberately has no doc_type/status filter. Storno
+// documents belong in the book (negative total, "STORNO — " prefix); the set is
+// keyed off number_full instead.
+export async function getKprEntries(
+  tenantId: number,
+  year: number,
+  range: KprRange = {},
+): Promise<KprEntry[]> {
+  // Seed: everything earlier in the same year. `< from` here and `>= from` below,
+  // so the two windows neither overlap nor leave a gap.
+  let seedCount = 0;
+  let seedSum = 0;
+  if (range.from) {
+    const [[seed]] = await pool.query<any[]>(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS s
+       FROM invoices
+       WHERE tenant_id = ? AND number_full IS NOT NULL AND YEAR(issue_date) = ?
+         AND issue_date < ?`,
+      [tenantId, year, range.from],
+    );
+    seedCount = Number(seed?.n ?? 0);
+    seedSum = Math.round(Number(seed?.s ?? 0) * 100) / 100;
+  }
+
+  const params: any[] = [tenantId, year];
+  let where = 'tenant_id = ? AND number_full IS NOT NULL AND YEAR(issue_date) = ?';
+  if (range.from) {
+    where += ' AND issue_date >= ?';
+    params.push(range.from);
+  }
+  if (range.to) {
+    where += ' AND issue_date <= ?';
+    params.push(range.to);
+  }
+
   const [rows] = await pool.query<any[]>(
     `SELECT number_full, issue_date, issue_datetime, payment_method, total, doc_type, guest_name_cache
      FROM invoices
-     WHERE tenant_id = ? AND number_full IS NOT NULL AND YEAR(issue_date) = ?
+     WHERE ${where}
      ORDER BY issue_datetime ASC, id ASC`,
-    [tenantId, year],
+    params,
   );
 
-  let cumulative = 0;
+  let cumulative = seedSum;
   return rows.map((r, i) => {
     const total = Number(r.total);
     const isCash = r.payment_method === 'gotovina';
     cumulative = Math.round((cumulative + total) * 100) / 100;
     return {
-      rb: i + 1,
+      rb: seedCount + i + 1,
       date: String(r.issue_date).slice(0, 10),
       number_full: r.number_full,
       description:
@@ -47,6 +93,14 @@ export async function getKprEntries(tenantId: number, year: number): Promise<Kpr
       cumulative,
     };
   });
+}
+
+// "2026." with no range; "01.07.2026. – 30.09.2026." with one.
+export function kprPeriodLabel(year: number, range: KprRange = {}): string {
+  if (range.from && range.to) return `${fmtDate(range.from)} – ${fmtDate(range.to)}`;
+  if (range.from) return `${year}. — od ${fmtDate(range.from)}`;
+  if (range.to) return `${year}. — do ${fmtDate(range.to)}`;
+  return `${year}.`;
 }
 
 export function kprCsv(entries: KprEntry[]): string {
@@ -61,14 +115,21 @@ export function kprCsv(entries: KprEntry[]): string {
 
 // Native .xlsx — amounts are real numbers (Excel applies the user's locale), so
 // it opens cleanly on desktop and mobile (Excel / Numbers / Sheets).
-export async function renderKprXlsx(entries: KprEntry[], profileName: string, year: number): Promise<Buffer> {
+export async function renderKprXlsx(
+  entries: KprEntry[],
+  profileName: string,
+  year: number,
+  range: KprRange = {},
+): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Visitors';
+  // Sheet name stays the bare year: Excel caps names at 31 chars and forbids
+  // / \ ? * [ ] : — the period goes in the title cell instead.
   const ws = wb.addWorksheet(`KPR ${year}`);
 
   ws.mergeCells('A1:H1');
   const title = ws.getCell('A1');
-  title.value = `Knjiga prometa (KPR) — ${year}`;
+  title.value = `Knjiga prometa (KPR) — ${kprPeriodLabel(year, range)}`;
   title.font = { bold: true, size: 14 };
   ws.getCell('A2').value = profileName;
 
@@ -106,6 +167,7 @@ export async function renderKprPdf(
   entries: KprEntry[],
   profileName: string,
   year: number,
+  range: KprRange = {},
 ): Promise<Buffer> {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
   doc.registerFont('r', path.join(FONT_DIR, 'DejaVuSans.ttf'));
@@ -115,7 +177,11 @@ export async function renderKprPdf(
   doc.on('data', (c) => chunks.push(c as Buffer));
   const done = new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 
-  doc.font('b').fontSize(14).fillColor('#12201d').text(`Knjiga prometa (KPR) — ${year}`, 36, 36);
+  doc
+    .font('b')
+    .fontSize(14)
+    .fillColor('#12201d')
+    .text(`Knjiga prometa (KPR) — ${kprPeriodLabel(year, range)}`, 36, 36);
   doc.font('r').fontSize(9).fillColor('#5c6b67').text(profileName, 36, 56);
 
   const cols = [

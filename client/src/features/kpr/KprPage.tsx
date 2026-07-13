@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, FileText, FileSpreadsheet, BookText } from 'lucide-react';
@@ -7,7 +7,7 @@ import { Select } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { api, ApiError } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
-import { formatEur, formatDate } from '@/lib/utils';
+import { formatEur, formatDate, cn } from '@/lib/utils';
 
 interface KprEntry {
   rb: number;
@@ -23,11 +23,52 @@ interface KprEntry {
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
 
+// Flat-rate tax is paid quarterly, so the quarters are the shortcut worth having.
+// The range always stays inside the selected year — Rb and Kumulativ are counted
+// from 1 January regardless, so a filtered view is a window into the year's book,
+// not a book of its own.
+type Period = 'year' | 'q1' | 'q2' | 'q3' | 'q4' | 'custom';
+
+const PERIODS: { key: Period; label: string }[] = [
+  { key: 'year', label: 'Cijela godina' },
+  { key: 'q1', label: 'Q1' },
+  { key: 'q2', label: 'Q2' },
+  { key: 'q3', label: 'Q3' },
+  { key: 'q4', label: 'Q4' },
+  { key: 'custom', label: 'Prilagođeno' },
+];
+
+const QUARTERS: Record<string, [string, string]> = {
+  q1: ['01-01', '03-31'],
+  q2: ['04-01', '06-30'],
+  q3: ['07-01', '09-30'],
+  q4: ['10-01', '12-31'],
+};
+
 export function KprPage() {
   const [year, setYear] = useState(CURRENT_YEAR);
+  const [period, setPeriod] = useState<Period>('year');
+  const [custom, setCustom] = useState<{ from: string; to: string }>({ from: '', to: '' });
+
+  // Quarters are derived from the selected year, so changing the year keeps the quarter.
+  const range = useMemo<{ from?: string; to?: string }>(() => {
+    if (period === 'year') return {};
+    if (period === 'custom') return { from: custom.from || undefined, to: custom.to || undefined };
+    const [from, to] = QUARTERS[period];
+    return { from: `${year}-${from}`, to: `${year}-${to}` };
+  }, [period, custom, year]);
+
+  // One query string, reused by the table and all three exports.
+  const qs = useMemo(() => {
+    const p = new URLSearchParams({ year: String(year) });
+    if (range.from) p.set('from', range.from);
+    if (range.to) p.set('to', range.to);
+    return `?${p.toString()}`;
+  }, [year, range]);
+
   const { data } = useQuery<{ year: number; entries: KprEntry[] }>({
-    queryKey: ['kpr', year],
-    queryFn: () => api.get(`/kpr?year=${year}`),
+    queryKey: ['kpr', year, range.from, range.to],
+    queryFn: () => api.get(`/kpr${qs}`),
   });
   const entries = data?.entries ?? [];
   const totals = entries.reduce(
@@ -36,9 +77,12 @@ export function KprPage() {
   );
   const { showError } = useToast();
 
+  const fileStem =
+    range.from && range.to ? `kpr-${range.from}_${range.to}` : `kpr-${year}`;
+
   async function save(kind: 'xlsx' | 'csv') {
     try {
-      await downloadFile(`/kpr/${kind}?year=${year}`, `kpr-${year}.${kind}`);
+      await downloadFile(`/kpr/${kind}${qs}`, `${fileStem}.${kind}`);
     } catch (err) {
       showError(err instanceof ApiError ? err.message : 'Preuzimanje nije uspjelo.');
     }
@@ -63,9 +107,62 @@ export function KprPage() {
         </div>
       </div>
 
+      {/* Razdoblje */}
+      <div className="space-y-2">
+        <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPeriod(p.key)}
+              className={cn(
+                'whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+                period === p.key
+                  ? 'border-primary bg-primary/5 text-primary'
+                  : 'border-border text-muted hover:bg-surface-2',
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {period === 'custom' && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs text-muted">
+              Od
+              <input
+                type="date"
+                value={custom.from}
+                min={`${year}-01-01`}
+                max={`${year}-12-31`}
+                onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
+                className="mt-1 h-10 w-full rounded-xl border border-input bg-surface px-3 text-sm text-foreground"
+              />
+            </label>
+            <label className="text-xs text-muted">
+              Do
+              <input
+                type="date"
+                value={custom.to}
+                min={`${year}-01-01`}
+                max={`${year}-12-31`}
+                onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
+                className="mt-1 h-10 w-full rounded-xl border border-input bg-surface px-3 text-sm text-foreground"
+              />
+            </label>
+          </div>
+        )}
+
+        {(range.from || range.to) && (
+          <p className="text-xs text-muted">
+            Redni broj i kumulativ i dalje se računaju od 1. siječnja {year}.
+          </p>
+        )}
+      </div>
+
       <div className="flex gap-2">
         <a
-          href={`/api/kpr/pdf?year=${year}`}
+          href={`/api/kpr/pdf${qs}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-surface text-sm font-medium text-foreground hover:bg-surface-2"
@@ -89,7 +186,11 @@ export function KprPage() {
       {entries.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 p-8 text-center">
           <BookText className="h-8 w-8 text-muted-2" />
-          <p className="text-sm text-muted">Nema prometa za {year}. godinu.</p>
+          <p className="text-sm text-muted">
+            {range.from || range.to
+              ? 'Nema prometa u odabranom razdoblju.'
+              : `Nema prometa za ${year}. godinu.`}
+          </p>
         </Card>
       ) : (
         <Card className="p-0">
