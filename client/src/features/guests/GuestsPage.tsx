@@ -7,6 +7,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Input, Field, Select } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { useConfirm } from '@/components/ui/Confirm';
+import { useCodebook } from '@/features/evisitor/api';
 import { api, ApiError } from '@/lib/api';
 
 export interface Guest {
@@ -21,6 +22,18 @@ export interface Guest {
   address: string | null;
   city: string | null;
   note: string | null;
+
+  // eVisitor — only needed to check the guest in, so they stay optional here.
+  middle_name: string | null;
+  date_of_birth: string | null;
+  gender: 'muski' | 'zenski' | null;
+  citizenship_code: string | null;
+  birth_country_code: string | null;
+  birth_city: string | null;
+  residence_country_code: string | null;
+  residence_city: string | null;
+  residence_address: string | null;
+  doc_type_code: string | null;
 }
 
 export function GuestsPage() {
@@ -140,6 +153,7 @@ export function GuestsPage() {
 function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
   const qc = useQueryClient();
   const { showSuccess, showError } = useToast();
+  const countries = useCodebook('country');
   const [form, setForm] = useState({
     first_name: edit?.first_name ?? '',
     last_name: edit?.last_name ?? '',
@@ -151,6 +165,17 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
     address: edit?.address ?? '',
     city: edit?.city ?? '',
     note: edit?.note ?? '',
+
+    middle_name: edit?.middle_name ?? '',
+    date_of_birth: edit?.date_of_birth?.slice(0, 10) ?? '',
+    gender: edit?.gender ?? '',
+    citizenship_code: edit?.citizenship_code ?? '',
+    birth_country_code: edit?.birth_country_code ?? '',
+    birth_city: edit?.birth_city ?? '',
+    residence_country_code: edit?.residence_country_code ?? '',
+    residence_city: edit?.residence_city ?? '',
+    residence_address: edit?.residence_address ?? '',
+    doc_type_code: edit?.doc_type_code ?? '',
   });
   const [loading, setLoading] = useState(false);
 
@@ -228,7 +253,103 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
         <Field label="Napomena">
           <Input value={form.note} onChange={(e) => set('note', e.target.value)} placeholder="Npr. redovan gost" />
         </Field>
+
+        {/* eVisitor requires all of this to register a tourist. It is optional for a
+            guest who only ever appears on an invoice, so it lives in its own block. */}
+        <div className="border-t border-border pt-4">
+          <p className="mb-1 text-sm font-medium text-foreground">Podaci za eVisitor</p>
+          <p className="mb-3 text-xs text-muted">
+            Obavezno za prijavu turista. Bez ovih podataka gost se ne može prijaviti u eVisitor.
+          </p>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Datum rođenja">
+                <Input
+                  type="date"
+                  value={form.date_of_birth}
+                  onChange={(e) => set('date_of_birth', e.target.value)}
+                />
+              </Field>
+              <Field label="Spol">
+                <Select value={form.gender} onChange={(e) => set('gender', e.target.value as typeof form.gender)}>
+                  <option value="">—</option>
+                  <option value="muski">Muški</option>
+                  <option value="zenski">Ženski</option>
+                </Select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Državljanstvo">
+                <CountrySelect
+                  value={form.citizenship_code}
+                  onChange={(v) => set('citizenship_code', v)}
+                  options={countries.data ?? []}
+                />
+              </Field>
+              <Field label="Država rođenja">
+                <CountrySelect
+                  value={form.birth_country_code}
+                  onChange={(v) => set('birth_country_code', v)}
+                  options={countries.data ?? []}
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Država prebivališta">
+                <CountrySelect
+                  value={form.residence_country_code}
+                  onChange={(v) => set('residence_country_code', v)}
+                  options={countries.data ?? []}
+                />
+              </Field>
+              <Field
+                label="Grad prebivališta"
+                hint={'Za Hrvatsku u obliku „Grad – Naselje”.'}
+              >
+                <Input
+                  value={form.residence_city}
+                  onChange={(e) => set('residence_city', e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <Field
+              label="Šifra vrste dokumenta"
+              hint="Šifra iz eVisitora (npr. 008). Sinkronizirajte šifrarnike u Postavke → eVisitor."
+            >
+              <Input
+                value={form.doc_type_code}
+                onChange={(e) => set('doc_type_code', e.target.value)}
+                placeholder="008"
+              />
+            </Field>
+          </div>
+        </div>
       </div>
     </Modal>
+  );
+}
+
+function CountrySelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { code: string; label: string }[];
+}) {
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">—</option>
+      {options.map((c) => (
+        <option key={c.code} value={c.code}>
+          {c.label}
+        </option>
+      ))}
+    </Select>
   );
 }

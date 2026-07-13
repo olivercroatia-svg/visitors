@@ -1,5 +1,7 @@
+import { env } from '../config/env';
 import { applyDueVatChanges } from '../services/vat.service';
 import { generateForAllTenants } from '../services/notifications.service';
+import { drainEVisitorQueue } from '../services/evisitor.service';
 
 // Lightweight in-process daily scheduler. Applies due VAT-status transitions
 // and generates deadline/threshold reminders. (For production scale this would
@@ -16,8 +18,30 @@ async function tick(): Promise<void> {
   }
 }
 
+// eVisitor gets its own, much faster tick: a check-in or check-out has to reach the
+// authority within 24h (ch. 4.4.3), and the 6h tick above could eat a quarter of that
+// window on its own.
+let draining = false;
+
+async function queueTick(): Promise<void> {
+  if (draining) return; // a slow drain must not overlap with the next interval
+  draining = true;
+  try {
+    const sent = await drainEVisitorQueue();
+    if (sent > 0) console.log(`[scheduler] drained ${sent} eVisitor request(s)`);
+  } catch (err) {
+    console.error('[scheduler] eVisitor drain failed', err);
+  } finally {
+    draining = false;
+  }
+}
+
 export function startScheduler(): void {
   // First run shortly after boot, then every 6 hours.
   setTimeout(tick, 15_000);
   setInterval(tick, SIX_HOURS);
+
+  const queueInterval = Math.max(1, env.evisitorQueueIntervalMin) * 60 * 1000;
+  setTimeout(queueTick, 30_000);
+  setInterval(queueTick, queueInterval);
 }

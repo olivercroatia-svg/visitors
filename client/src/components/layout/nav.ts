@@ -3,6 +3,7 @@ import {
   ReceiptText,
   ShieldCheck,
   BarChart3,
+  BedDouble,
   Users,
   Settings,
   BookText,
@@ -16,10 +17,12 @@ export interface NavItem {
 }
 
 // Primary destinations shown in the mobile bottom bar (max 4 + center FAB).
+// Boravci sits here rather than Obveze: in season a guest is checked in daily, from a
+// phone, while Obveze is an occasional sit-down screen. Obveze stays in fullNav / "Više".
 export const primaryNav: NavItem[] = [
   { to: '/', label: 'Početna', icon: LayoutDashboard },
   { to: '/racuni', label: 'Računi', icon: ReceiptText },
-  { to: '/obveze', label: 'Obveze', icon: ShieldCheck },
+  { to: '/boravci', label: 'Boravci', icon: BedDouble },
   { to: '/vise', label: 'Više', icon: Settings },
 ];
 
@@ -27,6 +30,7 @@ export const primaryNav: NavItem[] = [
 export const fullNav: NavItem[] = [
   { to: '/', label: 'Početna', icon: LayoutDashboard },
   { to: '/racuni', label: 'Računi', icon: ReceiptText },
+  { to: '/boravci', label: 'Boravci', icon: BedDouble },
   { to: '/gosti', label: 'Gosti', icon: Users },
   { to: '/obveze', label: 'Porezne obveze', icon: ShieldCheck },
   { to: '/kpr', label: 'Knjiga prometa', icon: BookText },

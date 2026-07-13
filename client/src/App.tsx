@@ -20,6 +20,9 @@ import { InvoiceDetailPage } from '@/features/invoices/InvoiceDetailPage';
 import { CompliancePage } from '@/features/compliance/CompliancePage';
 import { CalculatorsPage } from '@/features/compliance/CalculatorsPage';
 import { KprPage } from '@/features/kpr/KprPage';
+import { StaysPage } from '@/features/stays/StaysPage';
+import { CheckInPage } from '@/features/stays/CheckInPage';
+import { StayDetailPage } from '@/features/stays/StayDetailPage';
 import { AdminPage } from '@/admin/AdminPage';
 import { TenantDetailPage } from '@/admin/TenantDetailPage';
 
@@ -56,6 +59,9 @@ export default function App() {
                     <Route path="/racuni/novi" element={<NewInvoicePage />} />
                     <Route path="/racuni/:id" element={<InvoiceDetailPage />} />
                     <Route path="/gosti" element={<GuestsPage />} />
+                    <Route path="/boravci" element={<StaysPage />} />
+                    <Route path="/boravci/prijava" element={<CheckInPage />} />
+                    <Route path="/boravci/:id" element={<StayDetailPage />} />
                     <Route path="/obveze" element={<CompliancePage />} />
                     <Route path="/kalkulatori" element={<CalculatorsPage />} />
                     <Route path="/kpr" element={<KprPage />} />

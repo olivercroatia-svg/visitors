@@ -20,6 +20,15 @@ export const env = {
   jwtSecret: required('JWT_SECRET', 'dev-secret-visitors-local-only'),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
   fiscalProvider: process.env.FISCAL_PROVIDER ?? 'mock',
+  evisitorProvider: process.env.EVISITOR_PROVIDER ?? 'mock',
+  // Per-tenant credentials may override the base URL; these are the defaults each
+  // `environment` resolves to. Note the test API lives on /testApi — www.evisitor.hr/test
+  // is the test *web app*, not its API.
+  evisitorTestUrl: process.env.EVISITOR_TEST_URL ?? 'https://www.evisitor.hr/testApi',
+  evisitorProdUrl: process.env.EVISITOR_PROD_URL ?? 'https://www.evisitor.hr/eVisitorRhetos_API',
+  // 32 bytes, hex (openssl rand -hex 32). Encrypts eVisitor credentials at rest.
+  evisitorEncKey: process.env.EVISITOR_ENC_KEY ?? '',
+  evisitorQueueIntervalMin: Number(process.env.EVISITOR_QUEUE_INTERVAL_MIN ?? 5),
   db: {
     host: process.env.DB_HOST ?? '127.0.0.1',
     port: Number(process.env.DB_PORT ?? 3306),

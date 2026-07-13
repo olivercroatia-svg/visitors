@@ -13,6 +13,9 @@ import { kprRouter } from './kpr.routes';
 import { notificationsRouter } from './notifications.routes';
 import { analyticsRouter } from './analytics.routes';
 import { adminRouter } from './admin.routes';
+import { objectsRouter } from './objects.routes';
+import { staysRouter } from './stays.routes';
+import { evisitorRouter } from './evisitor.routes';
 import { ping } from '../db/pool';
 
 export const apiRouter = Router();
@@ -39,4 +42,7 @@ apiRouter.use('/compliance', complianceRouter);
 apiRouter.use('/kpr', kprRouter);
 apiRouter.use('/notifications', notificationsRouter);
 apiRouter.use('/analytics', analyticsRouter);
+apiRouter.use('/objects', objectsRouter);
+apiRouter.use('/stays', staysRouter);
+apiRouter.use('/evisitor', evisitorRouter);
 apiRouter.use('/admin', adminRouter);

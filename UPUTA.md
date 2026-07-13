@@ -57,6 +57,38 @@ Otvorite račun i pritisnite **Storniraj**, upišite razlog i potvrdite. Aplikac
 
 U izborniku **Gosti** vodite evidenciju gostiju (ime, država, dokument, kontakt). Spremljenog gosta možete brzo odabrati pri izradi računa.
 
+Za **prijavu u eVisitor** gost treba i dodatne podatke — datum rođenja, spol, državljanstvo, državu i grad prebivališta te šifru dokumenta. Njih unosite u istom obrascu, u dijelu **„Podaci za eVisitor"**. Bez njih se gost može staviti na račun, ali se ne može prijaviti.
+
+---
+
+## 🛏️ Boravci — prijava i odjava u eVisitor
+
+Ekran **Boravci** zamjenjuje ručni rad u eVisitor web sučelju.
+
+### Prije prve prijave
+
+1. **Postavke → eVisitor** — unesite pristupne podatke i pritisnite **Testiraj vezu**.
+   > 💡 Pristupne podatke otvarate sami kod svoje **turističke zajednice**. Preporuka je da za aplikaciju otvorite **poseban API podkorisnički račun**, odvojen od onoga kojim se prijavljujete na eVisitor web.
+2. Pritisnite **Sinkroniziraj šifrarnike** — time aplikacija povuče službene šifre (države, vrste dokumenata, kategorije pristojbe) izravno iz eVisitora.
+3. **Postavke → Objekti** — pritisnite **Povuci iz eVisitora** i vaši smještajni objekti se sami popune. Možete ih dodati i ručno, ali šifra objekta mora točno odgovarati onoj u eVisitoru.
+
+### Prijava gosta
+
+**Boravci → Nova prijava**: odaberite objekt i gosta, upišite dolazak i predviđeni odlazak te kategoriju boravišne pristojbe. Aplikacija provjeri podatke **prije slanja** i javi što nedostaje.
+
+> ⚠️ **Upišite stvarno vrijeme dolaska i odlaska** — ne trenutak kad unosite podatke i ne datum računa. eVisitor iz tih vremena računa noćenja i boravišnu pristojbu: boravak nakon 18:00 broji se kao još jedno noćenje, a dolazak prije 06:00 kao prethodni dan.
+
+### Odjava
+
+Otvorite boravak i pritisnite **Odjavi gosta** te upišite **stvarno** vrijeme odlaska. eVisitor očekuje odjavu **u roku 24 sata**.
+
+### Kad nešto ne prođe
+
+- **„Na čekanju"** — eVisitor trenutno nije dostupan. Aplikacija **sama pokušava ponovno**; možete i ručno pritisnuti **Pokušaj ponovno**.
+- **„Greška"** — eVisitor je odbio podatke (npr. dupla prijava ili kategorija koja ne odgovara dobi gosta). Poruku eVisitora prikazujemo **doslovno** na detalju boravka. Ispravite podatak pa pošaljite ponovno — samo ponavljanje slanja neće pomoći.
+
+> ✅ Prijava se **uvijek prvo spremi kod vas**, pa tek onda šalje. Ako eVisitor nije dostupan, boravak vam neće nestati.
+
 ---
 
 ## 🛡️ Porezne obveze
