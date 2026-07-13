@@ -55,6 +55,14 @@ export interface InvoiceDetail {
   guest_name_cache: string | null;
   guest_first: string | null;
   guest_last: string | null;
+  // Frozen copy of the buyer's company, taken when the invoice was created.
+  company_name_cache: string | null;
+  company_oib_cache: string | null;
+  company_vat_id_cache: string | null;
+  company_address_cache: string | null;
+  company_postal_code_cache: string | null;
+  company_city_cache: string | null;
+  company_country_cache: string | null;
   premise_name: string | null;
   premise_code: string | null;
   device_code: string | null;
@@ -85,6 +93,7 @@ export interface IssueInvoicePayload {
   device_id: number;
   guest_id?: number | null;
   guest_name?: string | null;
+  company_id?: number | null;
   payment_method: PaymentMethod;
   note?: string | null;
   items: NewInvoiceItem[];

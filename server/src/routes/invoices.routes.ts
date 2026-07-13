@@ -31,6 +31,7 @@ const draftSchema = z.object({
   device_id: z.number().int().positive(),
   guest_id: z.number().int().positive().nullable().optional(),
   guest_name: z.string().max(240).nullable().optional(),
+  company_id: z.number().int().positive().nullable().optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   payment_method: z.enum(['gotovina', 'kartica', 'transakcijski', 'ostalo']),
   note: z.string().max(500).nullable().optional(),

@@ -1,8 +1,9 @@
 import { useSearchParams } from 'react-router-dom';
-import { BadgeCheck, Building2, Home, MapPin, Tag } from 'lucide-react';
+import { BadgeCheck, Briefcase, Building2, Home, MapPin, Tag } from 'lucide-react';
 import { ProfileSection } from './ProfileSection';
 import { PremisesSection } from './PremisesSection';
 import { ServicesSection } from './ServicesSection';
+import { CompaniesSection } from './CompaniesSection';
 import { ObjectsSection } from '@/features/evisitor/ObjectsSection';
 import { CredentialsSection } from '@/features/evisitor/CredentialsSection';
 import { cn } from '@/lib/utils';
@@ -11,6 +12,7 @@ const TABS = [
   { key: 'obrt', label: 'Obrt', icon: Building2 },
   { key: 'prostori', label: 'Prostori', icon: MapPin },
   { key: 'usluge', label: 'Usluge', icon: Tag },
+  { key: 'tvrtke', label: 'Tvrtke', icon: Briefcase },
   { key: 'objekti', label: 'Objekti', icon: Home },
   { key: 'evisitor', label: 'eVisitor', icon: BadgeCheck },
 ] as const;
@@ -49,6 +51,7 @@ export function SettingsPage() {
       {active === 'obrt' && <ProfileSection />}
       {active === 'prostori' && <PremisesSection />}
       {active === 'usluge' && <ServicesSection />}
+      {active === 'tvrtke' && <CompaniesSection />}
       {active === 'objekti' && <ObjectsSection />}
       {active === 'evisitor' && <CredentialsSection />}
     </div>

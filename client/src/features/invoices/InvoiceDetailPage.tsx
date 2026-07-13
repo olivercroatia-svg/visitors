@@ -16,7 +16,7 @@ import { Input, Field } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { formatEur, formatDate } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
-import { useInvoice, useStorno, useRetryFiscal, PAYMENT_METHODS } from './api';
+import { useInvoice, useStorno, useRetryFiscal, PAYMENT_METHODS, type InvoiceDetail } from './api';
 import { InvoiceStatusBadge } from './badges';
 
 export function InvoiceDetailPage() {
@@ -165,6 +165,13 @@ export function InvoiceDetailPage() {
         <Meta label="Način plaćanja" value={paymentLabel(inv.payment_method)} />
         <Meta label="Prostor / uređaj" value={`${inv.premise_code ?? '—'} / ${inv.device_code ?? '—'}`} />
         <Meta label="Operater" value={inv.operator_label ?? '—'} />
+        {inv.company_name_cache && (
+          <div className="col-span-2 border-t border-border pt-3">
+            <dt className="text-xs text-muted">Tvrtka (informativno)</dt>
+            <dd className="text-sm font-medium text-foreground">{inv.company_name_cache}</dd>
+            {companyDetails(inv) && <p className="mt-0.5 text-xs text-muted">{companyDetails(inv)}</p>}
+          </div>
+        )}
       </Card>
 
       {/* Items */}
@@ -275,4 +282,18 @@ function trimNum(n: string): string {
 
 function paymentLabel(m: string): string {
   return PAYMENT_METHODS.find((p) => p.value === m)?.label ?? m;
+}
+
+// Reads the invoice's own frozen copy, never the current companies row.
+function companyDetails(inv: InvoiceDetail): string {
+  return [
+    [inv.company_address_cache, [inv.company_postal_code_cache, inv.company_city_cache].filter(Boolean).join(' ')]
+      .filter(Boolean)
+      .join(', '),
+    inv.company_country_cache,
+    inv.company_oib_cache ? `OIB: ${inv.company_oib_cache}` : '',
+    inv.company_vat_id_cache ? `PDV ID: ${inv.company_vat_id_cache}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

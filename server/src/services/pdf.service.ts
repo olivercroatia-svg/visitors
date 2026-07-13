@@ -66,17 +66,44 @@ export async function renderInvoicePdf(invoice: any, profile: Profile): Promise<
     { width: right - 320, align: 'right' },
   );
 
-  // Guest block
+  // Buyer band — guest on the left, the guest's company (if any) on the right.
+  // The company is informational only; the buyer is still the guest.
   let y = 130;
   doc.moveTo(left, y).lineTo(right, y).strokeColor('#e0e6e3').stroke();
   y += 10;
+
+  const colB = 320;
   doc.font('b').fontSize(9).fillColor('#5c6b67').text('KUPAC', left, y);
   doc.font('r').fontSize(10).fillColor('#12201d').text(
     invoice.guest_name_cache || [invoice.guest_first, invoice.guest_last].filter(Boolean).join(' ') || 'Krajnji potrošač',
     left,
     y + 12,
+    { width: colB - left - 12 },
   );
-  y += 44;
+
+  // 44 is the original fixed height of the guest block. Keeping it as the floor
+  // means an invoice without a company renders exactly as it did before.
+  let bandH = 44;
+
+  if (invoice.company_name_cache) {
+    const colW = right - colB;
+    const companyLines = [
+      invoice.company_address_cache,
+      [invoice.company_postal_code_cache, invoice.company_city_cache].filter(Boolean).join(' '),
+      isCroatia(invoice.company_country_cache) ? '' : invoice.company_country_cache,
+      invoice.company_oib_cache ? `OIB: ${invoice.company_oib_cache}` : '',
+      invoice.company_vat_id_cache ? `PDV ID: ${invoice.company_vat_id_cache}` : '',
+    ].filter(Boolean);
+
+    doc.font('b').fontSize(9).fillColor('#5c6b67').text('PODACI O TVRTKI', colB, y, { width: colW });
+    doc.font('b').fontSize(10).fillColor('#12201d').text(invoice.company_name_cache, colB, y + 12, { width: colW });
+    if (companyLines.length) {
+      doc.font('r').fontSize(8.5).fillColor('#5c6b67').text(companyLines.join('\n'), colB, doc.y + 1, { width: colW });
+    }
+    bandH = Math.max(bandH, doc.y - y + 10);
+  }
+
+  y += bandH;
 
   // Items table
   const cols = { desc: left, qty: 300, price: 350, vat: 425, total: 480 };
@@ -173,6 +200,13 @@ function fmtDate(d?: string | null): string {
   const s = String(d).slice(0, 10);
   const [y, m, day] = s.split('-');
   return `${day}.${m}.${y}.`;
+}
+
+// Country is free text (same as guests.country), so match the spellings the app
+// already treats as Croatia — it is only printed for foreign companies.
+function isCroatia(c?: string | null): boolean {
+  if (!c) return true;
+  return ['hrvatska', 'hr', 'hrv', 'croatia'].includes(c.trim().toLowerCase());
 }
 
 function trimNum(n: any): string {

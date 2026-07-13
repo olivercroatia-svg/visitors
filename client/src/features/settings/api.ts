@@ -29,6 +29,23 @@ export interface Service {
   active: number;
 }
 
+// A guest's employer. Printed on the invoice as an informational block — the
+// buyer is still the guest.
+export interface Company {
+  id: number;
+  name: string;
+  oib: string | null;
+  vat_id: string | null;
+  address: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: string | null;
+  email: string | null;
+  phone: string | null;
+  note: string | null;
+  active: number;
+}
+
 export interface Municipality {
   id: number;
   name: string;
@@ -54,6 +71,13 @@ export function useServices() {
   return useQuery<Service[]>({ queryKey: ['services'], queryFn: () => api.get('/services') });
 }
 
+export function useCompanies(q = '') {
+  return useQuery<Company[]>({
+    queryKey: ['companies', q],
+    queryFn: () => api.get(`/companies${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  });
+}
+
 export function useMunicipalities() {
   return useQuery<Municipality[]>({
     queryKey: ['municipalities'],
@@ -69,6 +93,7 @@ export function useInvalidateMasterData() {
   return () => {
     qc.invalidateQueries({ queryKey: ['premises'] });
     qc.invalidateQueries({ queryKey: ['services'] });
+    qc.invalidateQueries({ queryKey: ['companies'] });
     qc.invalidateQueries({ queryKey: ['profile'] });
     qc.invalidateQueries({ queryKey: ['onboarding'] });
     qc.invalidateQueries({ queryKey: ['me'] });

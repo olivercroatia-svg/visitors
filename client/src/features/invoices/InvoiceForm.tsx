@@ -10,7 +10,8 @@ import { useToast } from '@/components/ui/Toast';
 import { api, ApiError } from '@/lib/api';
 import { formatEur, cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth/AuthProvider';
-import { usePremises, useServices, VAT_CATEGORIES, SERVICE_UNITS } from '@/features/settings/api';
+import { usePremises, useServices, useCompanies, VAT_CATEGORIES, SERVICE_UNITS } from '@/features/settings/api';
+import { CompanyModal } from '@/features/settings/CompaniesSection';
 import type { Guest } from '@/features/guests/GuestsPage';
 import { useIssueInvoice, PAYMENT_METHODS, type NewInvoiceItem, type PaymentMethod } from './api';
 
@@ -30,6 +31,7 @@ export function InvoiceForm() {
   const { data: premises } = usePremises();
   const { data: services } = useServices();
   const { data: guests } = useQuery<Guest[]>({ queryKey: ['guests', ''], queryFn: () => api.get('/guests') });
+  const { data: companies } = useCompanies();
   const issue = useIssueInvoice();
 
   const vatApplicable = profile?.vat_status === 'obveznik';
@@ -37,6 +39,8 @@ export function InvoiceForm() {
   const [premiseId, setPremiseId] = useState<number | null>(null);
   const [deviceId, setDeviceId] = useState<number | null>(null);
   const [guestId, setGuestId] = useState<number | null>(null);
+  const [companyId, setCompanyId] = useState<number | null>(null);
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [payment, setPayment] = useState<PaymentMethod>('gotovina');
   const [note, setNote] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
@@ -111,6 +115,7 @@ export function InvoiceForm() {
         device_id: deviceId,
         guest_id: guestId,
         guest_name: guest ? `${guest.first_name} ${guest.last_name}` : null,
+        company_id: companyId,
         payment_method: payment,
         note: note.trim() || null,
         items: rows.map(({ description, quantity, unit, unit_price, vat_category }) => ({
@@ -165,7 +170,31 @@ export function InvoiceForm() {
             ))}
           </Select>
         </Field>
+        <Field label="Tvrtka (opcionalno)" hint="Podaci se informativno ispisuju na računu. Kupac ostaje gost.">
+          <div className="flex gap-2">
+            <Select
+              value={companyId ?? ''}
+              onChange={(e) => setCompanyId(e.target.value ? Number(e.target.value) : null)}
+              className="flex-1"
+            >
+              <option value="">Bez tvrtke</option>
+              {companies?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.oib ? ` · ${c.oib}` : c.vat_id ? ` · ${c.vat_id}` : ''}
+                </option>
+              ))}
+            </Select>
+            <Button variant="secondary" onClick={() => setCompanyModalOpen(true)} className="shrink-0">
+              <Plus className="h-4 w-4" /> Nova
+            </Button>
+          </div>
+        </Field>
       </Card>
+
+      {companyModalOpen && (
+        <CompanyModal onClose={() => setCompanyModalOpen(false)} onSaved={(id) => setCompanyId(id)} />
+      )}
 
       {/* Stavke */}
       <Card className="space-y-3 p-4">
@@ -257,6 +286,7 @@ export function InvoiceForm() {
         vatApplicable={vatApplicable}
         rows={rows}
         guestName={guests?.find((g) => g.id === guestId)?.first_name}
+        companyName={companies?.find((c) => c.id === companyId)?.name}
       />
     </div>
   );
@@ -345,6 +375,7 @@ function ConfirmIssueModal({
   vatApplicable,
   rows,
   guestName,
+  companyName,
 }: {
   open: boolean;
   onClose: () => void;
@@ -354,6 +385,7 @@ function ConfirmIssueModal({
   vatApplicable: boolean;
   rows: Row[];
   guestName?: string;
+  companyName?: string;
 }) {
   return (
     <Modal
@@ -400,6 +432,7 @@ function ConfirmIssueModal({
           </div>
         </div>
         {guestName && <p className="text-xs text-muted">Gost: {guestName}</p>}
+        {companyName && <p className="text-xs text-muted">Tvrtka: {companyName}</p>}
       </div>
     </Modal>
   );

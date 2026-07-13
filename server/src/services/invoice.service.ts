@@ -11,6 +11,7 @@ export interface DraftInput {
   device_id: number;
   guest_id?: number | null;
   guest_name?: string | null;
+  company_id?: number | null;
   due_date?: string | null;
   payment_method: 'gotovina' | 'kartica' | 'transakcijski' | 'ostalo';
   note?: string | null;
@@ -104,16 +105,42 @@ export async function createDraft(tenantId: number, userId: number, input: Draft
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+
+    // Copy the buyer company onto the invoice (like guest_name_cache). The invoice
+    // owns its copy from here on, so later editing or archiving the company never
+    // changes what an already-issued invoice prints.
+    let company: any = null;
+    if (input.company_id) {
+      const [[row]] = await conn.query<any[]>(
+        `SELECT name, oib, vat_id, address, postal_code, city, country
+         FROM companies WHERE id = ? AND tenant_id = ? AND active = 1 LIMIT 1`,
+        [input.company_id, tenantId],
+      );
+      if (!row) throw new InvoiceError(422, 'Odabrana tvrtka nije pronađena.');
+      company = row;
+    }
+
     const [result] = await conn.query<any>(
       `INSERT INTO invoices (tenant_id, doc_type, premise_id, device_id, guest_id, guest_name_cache,
+                             company_id, company_name_cache, company_oib_cache, company_vat_id_cache,
+                             company_address_cache, company_postal_code_cache, company_city_cache,
+                             company_country_cache,
                              due_date, payment_method, note, status)
-       VALUES (?, 'invoice', ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+       VALUES (?, 'invoice', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         tenantId,
         input.premise_id,
         input.device_id,
         input.guest_id ?? null,
         input.guest_name ?? null,
+        company ? input.company_id : null,
+        company?.name ?? null,
+        company?.oib ?? null,
+        company?.vat_id ?? null,
+        company?.address ?? null,
+        company?.postal_code ?? null,
+        company?.city ?? null,
+        company?.country ?? null,
         input.due_date ?? null,
         input.payment_method,
         input.note ?? null,
@@ -370,12 +397,19 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
 
     const [stornoRes] = await conn.query<any>(
       `INSERT INTO invoices (tenant_id, doc_type, premise_id, device_id, guest_id, guest_name_cache,
+              company_id, company_name_cache, company_oib_cache, company_vat_id_cache,
+              company_address_cache, company_postal_code_cache, company_city_cache, company_country_cache,
               year, seq, number_full, status, issue_date, issue_datetime, payment_method, currency,
               vat_applicable, vat_clause, subtotal, vat_total, total, operator_label, note,
               fiscal_status, cancels_invoice_id)
-       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       [
         tenantId, orig.premise_id, orig.device_id, orig.guest_id, orig.guest_name_cache,
+        // Mirror the original's company copy, not the live companies row — the storno
+        // must show exactly what the cancelled invoice showed.
+        orig.company_id, orig.company_name_cache, orig.company_oib_cache, orig.company_vat_id_cache,
+        orig.company_address_cache, orig.company_postal_code_cache, orig.company_city_cache,
+        orig.company_country_cache,
         year, seq, numberFull, dt.d, dt.dt, orig.payment_method, orig.currency,
         orig.vat_applicable, orig.vat_clause,
         -Number(orig.subtotal), -Number(orig.vat_total), -Number(orig.total),
