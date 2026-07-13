@@ -20,14 +20,23 @@ export const env = {
   jwtSecret: required('JWT_SECRET', 'dev-secret-visitors-local-only'),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
   fiscalProvider: process.env.FISCAL_PROVIDER ?? 'mock',
+  fiscalTestUrl:
+    process.env.FISCAL_TEST_URL ?? 'https://cistest.apis-it.hr:8449/FiskalizacijaServiceTest',
+  fiscalProdUrl:
+    process.env.FISCAL_PROD_URL ?? 'https://cis.porezna-uprava.hr:8449/FiskalizacijaService',
+  // The v2.7 spec prints XML-DSig algorithm URIs that do not exist in the W3C registry
+  // (see fiscal/sign.ts). We emit the standard ones; set this if the service rejects them.
+  fiscalXmldsigSpecUris: process.env.FISCAL_XMLDSIG_SPEC_URIS === 'true',
   evisitorProvider: process.env.EVISITOR_PROVIDER ?? 'mock',
   // Per-tenant credentials may override the base URL; these are the defaults each
   // `environment` resolves to. Note the test API lives on /testApi — www.evisitor.hr/test
   // is the test *web app*, not its API.
   evisitorTestUrl: process.env.EVISITOR_TEST_URL ?? 'https://www.evisitor.hr/testApi',
   evisitorProdUrl: process.env.EVISITOR_PROD_URL ?? 'https://www.evisitor.hr/eVisitorRhetos_API',
-  // 32 bytes, hex (openssl rand -hex 32). Encrypts eVisitor credentials at rest.
-  evisitorEncKey: process.env.EVISITOR_ENC_KEY ?? '',
+  // 32 bytes, hex (openssl rand -hex 32). Encrypts everything we must read back: eVisitor
+  // credentials and the fiscal signing certificate. EVISITOR_ENC_KEY is the old name and
+  // still works, so existing .env files keep running.
+  secretsEncKey: process.env.SECRETS_ENC_KEY ?? process.env.EVISITOR_ENC_KEY ?? '',
   evisitorQueueIntervalMin: Number(process.env.EVISITOR_QUEUE_INTERVAL_MIN ?? 5),
   db: {
     host: process.env.DB_HOST ?? '127.0.0.1',

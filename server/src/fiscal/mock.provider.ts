@@ -26,14 +26,20 @@ export class MockProvider implements FiscalizationProvider {
   async fiscalize(inv: FiscalInvoice): Promise<FiscalizationResult> {
     await delay();
     if (inv.note?.includes('MOCKFAIL') && (inv.attempt ?? 1) <= 1) {
-      return { status: 'failed', error: 'Simulirana greška veze (MOCKFAIL). Pokušat ćemo ponovno.' };
+      // Like the real provider, the ZKI survives a failed transfer — it is ours, not theirs.
+      return {
+        status: 'failed',
+        zki: this.makeZki(inv),
+        retryable: true,
+        error: 'Simulirana greška veze (MOCKFAIL). Pokušat ćemo ponovno.',
+      };
     }
-    return { status: 'confirmed', jir: this.makeJir(), zki: this.makeZki(inv) };
+    return { status: 'confirmed', jir: this.makeJir(), zki: this.makeZki(inv), retryable: false };
   }
 
   async cancel(inv: FiscalInvoice): Promise<FiscalizationResult> {
     await delay();
-    return { status: 'confirmed', jir: this.makeJir(), zki: this.makeZki(inv) };
+    return { status: 'confirmed', jir: this.makeJir(), zki: this.makeZki(inv), retryable: false };
   }
 
   async checkStatus(): Promise<FiscalizationStatus> {

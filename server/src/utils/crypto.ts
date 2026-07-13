@@ -1,8 +1,9 @@
 import crypto from 'crypto';
 import { env } from '../config/env';
 
-// AES-256-GCM for secrets we must be able to read back (eVisitor passwords) — unlike
-// user passwords, which stay bcrypt-hashed and are never decrypted.
+// AES-256-GCM for secrets we must be able to read back — eVisitor passwords and the
+// fiscal signing certificate — unlike user passwords, which stay bcrypt-hashed and are
+// never decrypted.
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12; // GCM standard
@@ -14,26 +15,30 @@ let warnedAboutDerivedKey = false;
 function resolveKey(): Buffer {
   if (cachedKey) return cachedKey;
 
-  const configured = env.evisitorEncKey.trim();
+  const configured = env.secretsEncKey.trim();
   if (/^[0-9a-fA-F]{64}$/.test(configured)) {
     cachedKey = Buffer.from(configured, 'hex');
     return cachedKey;
   }
 
-  // Never silently protect real credentials with a guessable key: in production a
-  // missing or malformed key is a hard failure, not a fallback.
-  if (env.isProd || env.evisitorProvider !== 'mock') {
+  // Never silently protect real secrets with a guessable key. The derived dev key is only
+  // acceptable while BOTH integrations are mocked — the moment either one talks to a real
+  // system, the data at rest is a real credential or a real signing certificate.
+  const talkingToRealSystem = env.evisitorProvider !== 'mock' || env.fiscalProvider !== 'mock';
+  if (env.isProd || talkingToRealSystem) {
     throw new Error(
-      'EVISITOR_ENC_KEY must be 64 hex characters (openssl rand -hex 32) to store eVisitor credentials.',
+      'SECRETS_ENC_KEY must be 64 hex characters (openssl rand -hex 32) to store eVisitor credentials and the fiscal certificate.',
     );
   }
 
   if (!warnedAboutDerivedKey) {
     console.warn(
-      '[crypto] EVISITOR_ENC_KEY is not set — deriving a dev-only key from JWT_SECRET. Mock provider only.',
+      '[crypto] SECRETS_ENC_KEY is not set — deriving a dev-only key from JWT_SECRET. Mock providers only.',
     );
     warnedAboutDerivedKey = true;
   }
+  // Seed string is deliberately unchanged from when this only guarded eVisitor secrets:
+  // changing it would silently invalidate everything already encrypted with the dev key.
   cachedKey = crypto.createHash('sha256').update(`visitors-evisitor-dev:${env.jwtSecret}`).digest();
   return cachedKey;
 }

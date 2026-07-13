@@ -195,7 +195,15 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
     throw new InvoiceError(422, 'Profil nije potpun — dovršite obavezne podatke prije izdavanja računa.');
   }
 
-  const [[operator]] = await pool.query<any[]>(`SELECT full_name FROM users WHERE id = ? LIMIT 1`, [userId]);
+  // OibOper is mandatory in the fiscal message. For a private landlord the operator is the
+  // landlord, so we fall back to the business OIB rather than blocking the invoice.
+  const [[operator]] = await pool.query<any[]>(
+    `SELECT u.full_name, COALESCE(u.oib, bp.oib) AS oib
+     FROM users u
+     LEFT JOIN business_profiles bp ON bp.tenant_id = u.tenant_id
+     WHERE u.id = ? LIMIT 1`,
+    [userId],
+  );
 
   const conn = await pool.getConnection();
   let numberFull = '';
@@ -262,7 +270,7 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
     await conn.query(
       `UPDATE invoices SET status='issued', year=?, seq=?, number_full=?, issue_date=?, issue_datetime=?,
               vat_applicable=?, vat_clause=?, subtotal_gross=?, discount_total=?, subtotal=?,
-              vat_total=?, total=?, operator_label=?,
+              vat_total=?, total=?, operator_label=?, operator_oib=?,
               fiscal_status='pending'
        WHERE id = ?`,
       [
@@ -279,6 +287,7 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
         computed.vat_total,
         computed.total,
         operator?.full_name ?? null,
+        operator?.oib ?? null,
         invoiceId,
       ],
     );
@@ -340,8 +349,34 @@ export async function fiscalizeInvoice(
   );
   if (!inv) return;
   const [[profile]] = await pool.query<any[]>(
-    `SELECT oib FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
+    `SELECT oib, sequence_mark FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
     [tenantId],
+  );
+
+  // The real message sends the invoice number in three parts and they also feed the ZKI,
+  // so the codes are read from the premise/device rather than parsed back out of number_full.
+  const [[codes]] = await pool.query<any[]>(
+    `SELECT p.code AS premise_code, d.code AS device_code
+     FROM invoices i
+     JOIN premises p ON p.id = i.premise_id
+     JOIN devices d ON d.id = i.device_id
+     WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
+    [invoiceId, tenantId],
+  );
+
+  // VAT is reported per rate, not per line.
+  const [vatRows] = await pool.query<any[]>(
+    `SELECT vat_rate AS rate, SUM(line_base) AS base, SUM(line_vat) AS amount
+     FROM invoice_items WHERE invoice_id = ? AND tenant_id = ? AND vat_rate > 0
+     GROUP BY vat_rate ORDER BY vat_rate`,
+    [invoiceId, tenantId],
+  );
+
+  const [[recipient]] = await pool.query<any[]>(
+    `SELECT c.oib FROM invoices i
+     LEFT JOIN companies c ON c.id = i.company_id
+     WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
+    [invoiceId, tenantId],
   );
 
   const idem = `${operation}-${invoiceId}`;
@@ -358,13 +393,28 @@ export async function fiscalizeInvoice(
 
   const payload: FiscalInvoice = {
     invoiceId,
+    tenantId,
     numberFull: inv.number_full,
+    seq: Number(inv.seq),
+    premiseCode: codes?.premise_code ?? '',
+    deviceCode: codes?.device_code ?? '',
+    sequenceMark: (profile?.sequence_mark ?? 'N') as 'P' | 'N',
     issueDatetime: inv.issue_datetime,
     total: Number(inv.total),
     oib: profile?.oib ?? null,
+    operatorOib: inv.operator_oib ?? profile?.oib ?? null,
     operatorLabel: inv.operator_label,
     paymentMethod: inv.payment_method,
     vatApplicable: Boolean(inv.vat_applicable),
+    vatLines: vatRows.map((r) => ({
+      rate: Number(r.rate),
+      base: Number(r.base),
+      amount: Number(r.amount),
+    })),
+    recipientOib: recipient?.oib ?? null,
+    // Anything past the first attempt reached the customer without a JIR, which is exactly
+    // what NakDost means to the tax authority.
+    lateDelivery: attempt > 1,
     attempt,
     note: inv.note,
   };
@@ -381,14 +431,23 @@ export async function fiscalizeInvoice(
       `UPDATE fiscal_requests SET status='confirmed', jir=?, zki=?, last_error=NULL WHERE idempotency_key=?`,
       [result.jir ?? null, result.zki ?? null, idem],
     );
-  } else {
-    await pool.query(`UPDATE invoices SET fiscal_status='pending' WHERE id=?`, [invoiceId]);
-    await pool.query(
-      `UPDATE fiscal_requests SET status='pending', last_error=?, next_attempt_at=DATE_ADD(NOW(), INTERVAL 5 MINUTE)
-       WHERE idempotency_key=?`,
-      [result.error ?? 'Nepoznata greška', idem],
-    );
+    return;
   }
+
+  // The ZKI is ours and is valid even when the transfer failed — it must be printed on the
+  // receipt regardless, so it is stored on the failure path too. Only the JIR is missing.
+  const permanent = result.retryable === false;
+  await pool.query(
+    `UPDATE invoices SET zki = COALESCE(?, zki), fiscal_status = ? WHERE id = ?`,
+    [result.zki ?? null, permanent ? 'failed' : 'pending', invoiceId],
+  );
+  await pool.query(
+    `UPDATE fiscal_requests
+     SET status = ?, zki = COALESCE(?, zki), last_error = ?,
+         next_attempt_at = ${permanent ? 'NULL' : 'DATE_ADD(NOW(), INTERVAL 5 MINUTE)'}
+     WHERE idempotency_key = ?`,
+    [permanent ? 'failed' : 'pending', result.zki ?? null, result.error ?? 'Nepoznata greška', idem],
+  );
 }
 
 // ---- Storno -----------------------------------------------------------------
@@ -415,7 +474,13 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
     const [[device]] = await conn.query<any[]>(`SELECT code FROM devices WHERE id = ?`, [orig.device_id]);
     const numberFull = `${seq}/${premise.code}/${device.code}`;
 
-    const [[operator]] = await conn.query<any[]>(`SELECT full_name FROM users WHERE id = ?`, [userId]);
+    const [[operator]] = await conn.query<any[]>(
+      `SELECT u.full_name, COALESCE(u.oib, bp.oib) AS oib
+       FROM users u
+       LEFT JOIN business_profiles bp ON bp.tenant_id = u.tenant_id
+       WHERE u.id = ?`,
+      [userId],
+    );
 
     const [stornoRes] = await conn.query<any>(
       `INSERT INTO invoices (tenant_id, doc_type, premise_id, device_id, guest_id, guest_name_cache,
@@ -423,9 +488,9 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
               company_address_cache, company_postal_code_cache, company_city_cache, company_country_cache,
               discount_type, discount_value, discount_total, subtotal_gross,
               year, seq, number_full, status, issue_date, issue_datetime, payment_method, currency,
-              vat_applicable, vat_clause, subtotal, vat_total, total, operator_label, note,
+              vat_applicable, vat_clause, subtotal, vat_total, total, operator_label, operator_oib, note,
               fiscal_status, cancels_invoice_id)
-       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+       VALUES (?, 'storno', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       [
         tenantId, orig.premise_id, orig.device_id, orig.guest_id, orig.guest_name_cache,
         // Mirror the original's company copy, not the live companies row — the storno
@@ -440,7 +505,8 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
         year, seq, numberFull, dt.d, dt.dt, orig.payment_method, orig.currency,
         orig.vat_applicable, orig.vat_clause,
         -Number(orig.subtotal), -Number(orig.vat_total), -Number(orig.total),
-        operator?.full_name ?? null, `Storno računa ${orig.number_full}. Razlog: ${reason}`,
+        operator?.full_name ?? null, operator?.oib ?? null,
+        `Storno računa ${orig.number_full}. Razlog: ${reason}`,
         originalId,
       ],
     );
@@ -489,11 +555,14 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-// Representative Porezna verification payload (exact URL confirmed in Phase 0).
+// Tax authority's receipt-verification link (Tehnička specifikacija v2.7, ch. 2.7):
+// the amount is in cents with no separators, and a storno carries a leading minus —
+// the spec's own example is `...&izn=-10550`. The sign must NOT be stripped, or the
+// customer's QR check on a storno reports a different invoice than the one they hold.
 function buildQr(inv: any): string | null {
   if (inv.status !== 'issued' || (!inv.jir && !inv.zki)) return null;
   const dt = (inv.issue_datetime ?? '').replace(/[-:]/g, '').replace(' ', '_').slice(0, 13);
-  const iznos = Math.round(Math.abs(Number(inv.total)) * 100);
+  const iznos = Math.round(Number(inv.total) * 100);
   const key = inv.jir ? `jir=${inv.jir}` : `zki=${inv.zki}`;
   return `https://porezna.gov.hr/rn?${key}&datv=${dt}&izn=${iznos}`;
 }
