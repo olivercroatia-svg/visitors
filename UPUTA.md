@@ -47,7 +47,37 @@ Nakon potvrde račun se **automatski fiskalizira** i dobiva **JIR** i **ZKI** te
 
 > ⚠️ **Važno:** Izdani račun se više ne može mijenjati. Ispravak je moguć isključivo **storniranjem** — tako nalaže zakon.
 
-Ako fiskalizacija ne uspije (npr. nema veze), račun ostaje evidentiran s oznakom **„na čekanju"**. Na detalju računa pritisnite **Naknadna fiskalizacija** čim se veza uspostavi.
+---
+
+## 🔐 Fiskalizacija, JIR i ZKI
+
+Na svakom izdanom računu piše dvoje, i to nije isto:
+
+| | Što je | Tko ga radi |
+|---|---|---|
+| **ZKI** — zaštitni kod izdavatelja | 32 znaka koje aplikacija izračuna iz podataka vašeg računa i vašeg certifikata | **Vi.** Postoji uvijek, i kad Porezna nije dostupna. |
+| **JIR** — jedinstveni identifikator računa | Potvrda da je Porezna uprava račun zaprimila | **Porezna uprava.** Dobiva se tek kad poruka prođe. |
+
+Zato račun **uvijek ima ZKI**, a JIR ponekad stigne kasnije. To je zakonom predviđeno i nije greška.
+
+### Ako fiskalizacija ne prođe
+
+Račun **ostaje valjan i uredno evidentiran** — možete ga izdati gostu. Aplikacija razlikuje dva slučaja:
+
+- 🟡 **„Na čekanju"** — Porezna trenutno nije dostupna (npr. nema interneta). Aplikacija **sama pokušava ponovno**; možete i ručno pritisnuti **Naknadna fiskalizacija** na detalju računa. Ovo se najčešće riješi samo od sebe.
+- 🔴 **„Greška fiskalizacije"** — Porezna je poruku **odbila** (npr. neispravan ili istekao certifikat). Ponovno slanje istog računa neće pomoći dok se uzrok ne ispravi. Poruku greške vidite na detalju računa.
+
+> ⚠️ Račun bez JIR-a morate naknadno dostaviti Poreznoj. Aplikacija to radi automatski, ali ako „Greška" stoji danima, javite se knjigovođi.
+
+### Provjera računa QR kodom
+
+Gost može mobitelom skenirati **QR kod** s računa i na stranici Porezne uprave provjeriti je li račun stvarno prijavljen. Na **storno računu** QR nosi negativan iznos — tako i mora biti, jer storno umanjuje promet.
+
+### Digitalni certifikat
+
+Za slanje pravih računa Poreznoj upravi potreban je **digitalni certifikat** (FINA ili drugi ovlašteni izdavatelj) koji sadrži vaš OIB. Certifikat se u aplikaciju postavlja **jednom**, i mora glasiti na **isti OIB** kao vaš obrt — inače Porezna odbija svaki račun.
+
+> 💡 Dok certifikat nije postavljen, aplikacija radi u **testnom načinu**: računi se numeriraju i vode uredno, ali se ne šalju Poreznoj upravi.
 
 ---
 
