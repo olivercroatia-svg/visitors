@@ -22,6 +22,11 @@ app.use(
     credentials: true,
   }),
 );
+// Document scanning posts 1–3 base64 photos, which 1mb refuses. body-parser marks the request
+// once it has parsed it and later parsers skip it, so mounting the wider limit FIRST — and only
+// on this path — raises the ceiling for scanning without loosening it anywhere else. The limit
+// that actually protects us is per-image, after decoding, inside the route.
+app.use('/api/guests/scan', express.json({ limit: '8mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 

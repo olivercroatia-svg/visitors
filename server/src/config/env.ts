@@ -35,6 +35,20 @@ function cookieSecure(): boolean {
   return configured ? configured === 'true' : IS_PROD;
 }
 
+// Document scanning calls a paid API. Starting with OCR_PROVIDER=anthropic and no key would
+// mean every scan fails at request time, per user, with an opaque error — so fail at boot
+// instead, where it is one line in the log and obvious what to fix.
+function anthropicKey(): string {
+  const configured = process.env.ANTHROPIC_API_KEY?.trim();
+  if (configured) return configured;
+  if ((process.env.OCR_PROVIDER ?? 'mock') === 'anthropic') {
+    throw new Error(
+      'ANTHROPIC_API_KEY must be set when OCR_PROVIDER=anthropic — document scanning cannot work without it. Use OCR_PROVIDER=mock for local work.',
+    );
+  }
+  return '';
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   isProd: IS_PROD,
@@ -42,6 +56,9 @@ export const env = {
   clientUrl: process.env.CLIENT_URL ?? 'http://localhost:5173',
   jwtSecret: sessionSecret(),
   cookieSecure: cookieSecure(),
+  // 'mock' returns a canned document so the whole flow can be developed without a key or a bill.
+  ocrProvider: process.env.OCR_PROVIDER ?? 'mock',
+  anthropicApiKey: anthropicKey(),
   fiscalProvider: process.env.FISCAL_PROVIDER ?? 'mock',
   fiscalTestUrl:
     process.env.FISCAL_TEST_URL ?? 'https://cistest.apis-it.hr:8449/FiskalizacijaServiceTest',

@@ -1,9 +1,14 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { audit } from '../services/audit.service';
+import { getCodebook } from '../services/evisitor.service';
+import { getOcrProvider } from '../ocr';
+import { verifyMrz } from '../ocr/mrz';
+import type { ExtractedGuest, ScanMediaType } from '../ocr/types';
 
 export const guestsRouter = Router();
 guestsRouter.use(requireAuth);
@@ -171,5 +176,182 @@ guestsRouter.delete(
       ip: req.ip,
     });
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// POST /guests/scan — read an ID document and RETURN the fields. Nothing else.
+//
+// This route deliberately does NOT write to the database. It creates no guest, updates no
+// guest, creates no stay, and never touches eVisitor. It decodes the images, extracts, drops
+// the buffers, and answers. Saving is the user's next, separate click; registering the guest
+// with MUP is another one after that. A scan must never start a chain the user did not ask for.
+// ---------------------------------------------------------------------------
+
+// This is the only endpoint in the app that costs real money per call, so it is the only one
+// an authenticated user can use to run up a bill. Key by user, not IP — several landlords can
+// share an office NAT, and one of them should not exhaust the others' quota. requireAuth runs
+// before this on the router, so req.auth is always populated (no IP fallback, which would also
+// trip express-rate-limit's IPv6 guard).
+const scanLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 40,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.auth!.userId),
+  message: { error: 'Previše skeniranja u kratkom vremenu. Pokušajte ponovno za sat vremena.' },
+});
+
+const MAX_IMAGES = 3;
+// A 1600px JPEG lands around 250–400 kB. 1.5 MB is generous headroom and still refuses
+// someone posting a full-resolution photo straight through. Mirrors MAX_P12_BYTES in certStore.
+const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024;
+
+const scanSchema = z.object({
+  images: z.array(z.string().min(1)).min(1, 'Dodajte barem jednu fotografiju.').max(MAX_IMAGES),
+  media_type: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),
+});
+
+// The declared media_type is client-supplied, so it is a hint, not a fact. Trust the bytes.
+function sniff(buf: Buffer): ScanMediaType | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  return null;
+}
+
+/**
+ * A country code from a model is a guess until something checks it. Nothing downstream does:
+ * Zod only caps the length, the column is CHAR(3), and validateStayInput() only tests for
+ * presence — so a hallucinated "XYZ" would sail through and be rejected by MUP *after* the
+ * stay row exists. Check it here, while the cost of being wrong is still an empty field.
+ *
+ * Calibration matters. When the codebook is synced it is authoritative and we reject non-members.
+ * When it is not, we are holding the shipped 45-country fallback, which is far too short to
+ * judge by — a guest from Argentina is not a hallucination. So: accept the shape, flag it as
+ * unverified, and let the user look.
+ */
+function resolveCountry(
+  code: string | null,
+  codes: Set<string>,
+  synced: boolean,
+): { value: string | null; unverified: boolean } {
+  if (!code) return { value: null, unverified: false };
+  const up = code.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(up)) return { value: null, unverified: false };
+  if (codes.has(up)) return { value: up, unverified: false };
+  if (synced) return { value: null, unverified: true }; // authoritative list says no
+  return { value: up, unverified: true }; // fallback list is too short to reject on
+}
+
+guestsRouter.post(
+  '/scan',
+  scanLimiter,
+  wrap(async (req, res) => {
+    const input = scanSchema.parse(req.body);
+
+    // errorHandler collapses anything non-Zod into a generic 500, so answer here rather than
+    // throw — these messages tell the user exactly which photo to retake.
+    const images: { base64: string; mediaType: ScanMediaType }[] = [];
+    for (let i = 0; i < input.images.length; i++) {
+      const buf = Buffer.from(input.images[i], 'base64');
+      if (buf.length > MAX_IMAGE_BYTES) {
+        res.status(413).json({ error: `Fotografija ${i + 1} je prevelika. Najveća veličina je 1,5 MB.` });
+        return;
+      }
+      const mediaType = sniff(buf);
+      if (!mediaType) {
+        res.status(400).json({
+          error: `Datoteka ${i + 1} nije valjana slika (podržani formati: JPEG, PNG, WebP).`,
+        });
+        return;
+      }
+      images.push({ base64: input.images[i], mediaType });
+    }
+
+    const [countries, docTypes] = await Promise.all([
+      getCodebook('country'),
+      getCodebook('document_type'),
+    ]);
+    const countriesSynced = countries.length > 0 && countries[0].synced;
+    const docTypesSynced = docTypes.length > 0 && docTypes[0].synced;
+
+    let result;
+    try {
+      result = await getOcrProvider().extract(images, {
+        countries: countries.map((c) => ({ code: c.code, label: c.label })),
+        countriesSynced,
+        docTypes: docTypes.map((d) => ({ code: d.code, label: d.label })),
+        docTypesSynced,
+      });
+    } catch (err) {
+      console.error('[ocr] extraction failed', err);
+      res.status(502).json({
+        error: 'Dokument nije moguće prepoznati. Pokušajte s oštrijom fotografijom.',
+      });
+      return;
+    }
+
+    const fields: ExtractedGuest = { ...result.fields };
+
+    // --- MRZ has priority over the visual read -------------------------------
+    // The MRZ carries check digits; the printed side does not. If the arithmetic holds, the
+    // machine-readable value is proven and the visual one is merely plausible — so it wins.
+    // Names are the exception: the MRZ transliterates them (ČAVIĆ -> CAVIC), so the visual
+    // read is strictly better there and is left alone.
+    const mrz = verifyMrz(result.mrz);
+    const verified: string[] = [];
+    if (mrz?.ok) {
+      if (mrz.doc_number) { fields.doc_number = mrz.doc_number; verified.push('doc_number'); }
+      if (mrz.date_of_birth) { fields.date_of_birth = mrz.date_of_birth; verified.push('date_of_birth'); }
+      if (mrz.citizenship_code) { fields.citizenship_code = mrz.citizenship_code; verified.push('citizenship_code'); }
+      if (mrz.gender) { fields.gender = mrz.gender; verified.push('gender'); }
+    }
+
+    // --- Codebook membership -------------------------------------------------
+    const countryCodes = new Set(countries.map((c) => c.code.toUpperCase()));
+    const unverified: string[] = [];
+    for (const key of ['citizenship_code', 'birth_country_code', 'residence_country_code'] as const) {
+      const r = resolveCountry(fields[key], countryCodes, countriesSynced);
+      fields[key] = r.value;
+      if (r.unverified) unverified.push(key);
+    }
+
+    // doc_type_code is eVisitor's own ("008"), not derivable from the document. If the codebook
+    // is not synced we cannot know it, so we leave it empty rather than invent one — the same
+    // call migration 005 made when it refused to guess this column from doc_type.
+    const notes: string[] = [];
+    if (result.notes) notes.push(result.notes);
+    if (!docTypesSynced) {
+      fields.doc_type_code = null;
+      notes.push('Šifru vrste dokumenta unesite ručno ili sinkronizirajte šifrarnike (Postavke → eVisitor).');
+    } else if (fields.doc_type_code && !docTypes.some((d) => d.code === fields.doc_type_code)) {
+      fields.doc_type_code = null;
+    }
+
+    // No PII in the audit trail — only that a scan happened, by whom.
+    await audit({
+      tenantId: req.auth!.tenantId,
+      userId: req.auth!.userId,
+      action: 'guest.scan',
+      entity: 'guest',
+      meta: { images: images.length, kind: result.document_kind, mrz_ok: mrz?.ok ?? null },
+      ip: req.ip,
+    });
+
+    // The image buffers go out of scope here and are never written anywhere.
+    res.json({
+      fields,
+      document_kind: result.document_kind,
+      mrz_present: mrz !== null,
+      mrz_ok: mrz?.ok ?? false,
+      mrz_failed: mrz?.failed ?? [],
+      verified_fields: verified,
+      unverified_fields: unverified,
+      notes: notes.length > 0 ? notes.join(' ') : null,
+    });
   }),
 );
