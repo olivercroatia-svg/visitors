@@ -14,7 +14,8 @@ profileRouter.get(
   '/',
   wrap(async (req, res) => {
     const [[profile]] = await pool.query<any[]>(
-      `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status, onboarding_completed
+      `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status,
+              sequence_mark, onboarding_completed
        FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
       [req.auth!.tenantId],
     );
@@ -69,7 +70,8 @@ profileRouter.put(
       ip: req.ip,
     });
     const [[profile]] = await pool.query<any[]>(
-      `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status, onboarding_completed
+      `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status,
+              sequence_mark, onboarding_completed
        FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
       [req.auth!.tenantId],
     );

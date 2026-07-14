@@ -2,6 +2,7 @@ import { env } from '../config/env';
 import { applyDueVatChanges } from '../services/vat.service';
 import { generateForAllTenants } from '../services/notifications.service';
 import { drainEVisitorQueue } from '../services/evisitor.service';
+import { drainFiscalQueue } from '../services/invoice.service';
 
 // Lightweight in-process daily scheduler. Applies due VAT-status transitions
 // and generates deadline/threshold reminders. (For production scale this would
@@ -36,6 +37,23 @@ async function queueTick(): Promise<void> {
   }
 }
 
+// Fiscalization gets its own guard rather than sharing eVisitor's: a slow eVisitor drain
+// must not hold back invoices that are burning through the naknadna-dostava window.
+let drainingFiscal = false;
+
+async function fiscalQueueTick(): Promise<void> {
+  if (drainingFiscal) return;
+  drainingFiscal = true;
+  try {
+    const sent = await drainFiscalQueue();
+    if (sent > 0) console.log(`[scheduler] drained ${sent} fiscal request(s)`);
+  } catch (err) {
+    console.error('[scheduler] fiscal drain failed', err);
+  } finally {
+    drainingFiscal = false;
+  }
+}
+
 export function startScheduler(): void {
   // First run shortly after boot, then every 6 hours.
   setTimeout(tick, 15_000);
@@ -44,4 +62,9 @@ export function startScheduler(): void {
   const queueInterval = Math.max(1, env.evisitorQueueIntervalMin) * 60 * 1000;
   setTimeout(queueTick, 30_000);
   setInterval(queueTick, queueInterval);
+
+  // Staggered from the eVisitor drain so the two do not hit the DB together on every boot.
+  const fiscalInterval = Math.max(1, env.fiscalQueueIntervalMin) * 60 * 1000;
+  setTimeout(fiscalQueueTick, 45_000);
+  setInterval(fiscalQueueTick, fiscalInterval);
 }

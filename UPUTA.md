@@ -30,6 +30,8 @@ Prije prvog računa potrebno je ispuniti par podataka. Aplikacija vas kroz to vo
 
 > ✅ Kad je sve popunjeno, na početnom ekranu semafor postaje zelen i spremni ste za izdavanje računa.
 
+> 🔐 **Prije prvog pravog računa** dodajte i **digitalni certifikat** (Postavke → Fiskalizacija) — bez njega se računi vode uredno, ali se ne šalju Poreznoj upravi. Vidi poglavlje **Fiskalizacija, JIR i ZKI**.
+
 > 💡 **Neobavezno:** Ako vam dolaze poslovni gosti koji traže podatke svoje firme na računu, te firme možete unaprijed spremiti u **Postavke → Tvrtke**. Nije uvjet za izdavanje računa i možete ih dodati kad zatrebaju.
 
 ---
@@ -64,18 +66,32 @@ Zato račun **uvijek ima ZKI**, a JIR ponekad stigne kasnije. To je zakonom pred
 
 Račun **ostaje valjan i uredno evidentiran** — možete ga izdati gostu. Aplikacija razlikuje dva slučaja:
 
-- 🟡 **„Na čekanju"** — Porezna trenutno nije dostupna (npr. nema interneta). Aplikacija **sama pokušava ponovno**; možete i ručno pritisnuti **Naknadna fiskalizacija** na detalju računa. Ovo se najčešće riješi samo od sebe.
+- 🟡 **„Na čekanju"** — Porezna trenutno nije dostupna (npr. nema interneta). **Ne morate ništa raditi.** Aplikacija sama pokušava ponovno, u sve rjeđim razmacima, sve do isteka zakonskog roka za naknadnu dostavu. Čim veza proradi, račun sam dobije JIR. Ako vam se žuri, na detalju računa postoji i gumb **Naknadna fiskalizacija**.
 - 🔴 **„Greška fiskalizacije"** — Porezna je poruku **odbila** (npr. neispravan ili istekao certifikat). Ponovno slanje istog računa neće pomoći dok se uzrok ne ispravi. Poruku greške vidite na detalju računa.
 
-> ⚠️ Račun bez JIR-a morate naknadno dostaviti Poreznoj. Aplikacija to radi automatski, ali ako „Greška" stoji danima, javite se knjigovođi.
+> 🔔 U oba slučaja kad problem **ostane neriješen** — Porezna je račun odbila ili je istekao rok za naknadnu dostavu — dobit ćete **obavijest u zvonu** s linkom na taj račun. Račun ne može tiho propasti.
 
 ### Provjera računa QR kodom
 
 Gost može mobitelom skenirati **QR kod** s računa i na stranici Porezne uprave provjeriti je li račun stvarno prijavljen. Na **storno računu** QR nosi negativan iznos — tako i mora biti, jer storno umanjuje promet.
 
-### Digitalni certifikat
+### Digitalni certifikat (Postavke → Fiskalizacija)
 
-Za slanje pravih računa Poreznoj upravi potreban je **digitalni certifikat** (FINA ili drugi ovlašteni izdavatelj) koji sadrži vaš OIB. Certifikat se u aplikaciju postavlja **jednom**, i mora glasiti na **isti OIB** kao vaš obrt — inače Porezna odbija svaki račun.
+Za slanje pravih računa Poreznoj upravi potreban je **digitalni certifikat** (FINA ili drugi ovlašteni izdavatelj) koji sadrži vaš OIB. Postavlja se **jednom**:
+
+1. Otvorite **Postavke → Fiskalizacija**.
+2. Odaberite datoteku certifikata (**.p12**) i upišite njezinu **lozinku**.
+3. Odaberite **okolinu** — dok testirate ostavite **Testna okolina**, na **Produkciju** prijeđite tek kad je sve provjereno.
+4. Pritisnite **Spremi certifikat**.
+
+Aplikacija odmah pročita certifikat i pokaže **OIB na koji glasi** i **do kada vrijedi**. Certifikat mora glasiti na **isti OIB kao vaš obrt** — ako ne glasi, aplikacija ga **odbija odmah**, jer bi Porezna inače odbijala svaki vaš račun. Certifikat se čuva **šifrirano** i nikad se ne prikazuje natrag.
+
+> ⏰ **Pratite rok valjanosti.** Kad se približi istek, na istom ekranu piše „Vrijedi do". Istekao certifikat = računi se prestaju fiskalizirati. Novi postavljate gumbom **Zamijeni certifikat**.
+
+Na istom ekranu, pod **Postavke fiskalnog računa**, još su dvije stavke:
+
+- **Slijednost brojeva računa** — mora odgovarati onome što ste prijavili Poreznoj upravi (najčešće **po naplatnom uređaju**).
+- **OIB operatera** — OIB osobe koja izdaje račun. **Ostavite prazno ako račune izdajete sami** — tada se koristi OIB vašeg obrta. Popunite samo ako račune u vaše ime izdaje netko drugi.
 
 > 💡 Dok certifikat nije postavljen, aplikacija radi u **testnom načinu**: računi se numeriraju i vode uredno, ali se ne šalju Poreznoj upravi.
 
@@ -262,7 +278,7 @@ Ekran **Analitika** daje pregled poslovanja s filtrima po razdoblju, prostoru i 
 
 | Ikona | Što radi |
 |---|---|
-| 🔔 Zvono | Obavijesti i podsjetnici (rokovi, prag PDV-a, upozorenja) |
+| 🔔 Zvono | Obavijesti i podsjetnici (rokovi, prag PDV-a, računi koje Porezna nije zaprimila, upozorenja) |
 | ❓ Pomoć | Otvara ove upute |
 | 🔄 Osvježi | Ponovno učitava aplikaciju |
 | 🌗 Tema | Prebacuje svijetli/tamni prikaz |
@@ -274,7 +290,9 @@ Klik na logo **Visitors** vas uvijek vraća na početni ekran. Na računalu i ta
 ## 💡 Savjeti i česta pitanja
 
 - **Ne mogu izdati račun?** Provjerite je li profil potpun (OIB, adresa, prostor, naplatni uređaj) — semafor na početnoj pokazuje što nedostaje.
-- **Račun je „na čekanju"?** Fiskalizacija nije uspjela; pokrenite naknadnu fiskalizaciju na detalju računa.
+- **Račun je „na čekanju"?** Porezna trenutno nije dostupna. **Ne morate ništa raditi** — aplikacija sama ponavlja slanje dok ne prođe. Račun je valjan i možete ga dati gostu (ZKI je na njemu).
+- **Piše „Greška fiskalizacije"?** To znači da je Porezna račun **odbila** i ponovno slanje neće pomoći. Najčešći uzrok je certifikat: provjerite u **Postavke → Fiskalizacija** je li istekao i glasi li na isti OIB kao obrt.
+- **Kako dobiti certifikat?** Naručuje se kod FINA-e (ili drugog ovlaštenog izdavatelja) i mora glasiti na OIB vašeg obrta. Dobiveni **.p12** i njegovu lozinku unesete u **Postavke → Fiskalizacija**.
 - **Pogriješio sam na računu?** Ne brišite ga — **stornirajte** ga i izdajte novi.
 - **Gost traži da mu na računu pišu podaci firme?** Odaberite (ili dodajte) tvrtku u polju **Tvrtka** pri izradi računa. Podaci se ispisuju na PDF-u i pamte za sljedeći put.
 - **„Testiraj vezu" ne prolazi?** Provjerite jeste li odabrali pravu **okolinu** (testni podaci ne rade na Produkciji i obrnuto) i, na testnoj okolini, jeste li unijeli **API ključ**. Crveni okvir ispisuje poruku samog eVisitora — ona vam kaže što je odbijeno.

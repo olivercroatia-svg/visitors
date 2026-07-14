@@ -338,10 +338,53 @@ async function nextSeq(conn: any, tenantId: number, premiseId: number, deviceId:
 
 // ---- Fiscalization (with retry queue) --------------------------------------
 
+// Backoff is capped at an hour: 2, 4, 8 … 60 minutes. The real stop is deadline_at, not
+// an attempt count — "naknadna dostava" is a legal window, so we keep trying inside it.
+const MAX_BACKOFF_MIN = 60;
+// Pure runaway guard. With the cap above, 48h of retrying is ~50 attempts.
+const ATTEMPTS_HARD_CAP = 200;
+
+/**
+ * Enqueue + send. Called when an invoice is issued or cancelled, and by the manual
+ * "naknadna fiskalizacija" button — where resurrecting a `failed` row is intended, because
+ * a human is explicitly asking for another attempt.
+ *
+ * The queue worker must NOT come through here: this upsert clears `next_attempt_at`, the
+ * very column the worker selects on. It calls runFiscalRequest directly instead.
+ */
 export async function fiscalizeInvoice(
   tenantId: number,
   invoiceId: number,
   operation: 'fiscalize' | 'cancel',
+): Promise<void> {
+  const idem = `${operation}-${invoiceId}`;
+  const deadlineHours = await retryDeadlineHours();
+
+  // deadline_at is only set on INSERT — the legal window is anchored to the first attempt
+  // and must not slide forward every time someone presses retry.
+  await pool.query(
+    `INSERT INTO fiscal_requests (tenant_id, invoice_id, operation, status, attempts, idempotency_key,
+                                  deadline_at)
+     VALUES (?, ?, ?, 'pending', 1, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))
+     ON DUPLICATE KEY UPDATE attempts = attempts + 1, status = 'pending', next_attempt_at = NULL`,
+    [tenantId, invoiceId, operation, idem, deadlineHours],
+  );
+  const [[fr]] = await pool.query<any[]>(
+    `SELECT attempts FROM fiscal_requests WHERE idempotency_key = ?`,
+    [idem],
+  );
+
+  await runFiscalRequest(tenantId, invoiceId, operation, idem, Number(fr?.attempts ?? 1));
+}
+
+// Builds the message from the CURRENT state of the invoice, sends it, and records the
+// outcome. No enqueue — the caller owns the queue row.
+async function runFiscalRequest(
+  tenantId: number,
+  invoiceId: number,
+  operation: 'fiscalize' | 'cancel',
+  idem: string,
+  attempt: number,
 ): Promise<void> {
   const [[inv]] = await pool.query<any[]>(
     `SELECT * FROM invoices WHERE id = ? AND tenant_id = ? LIMIT 1`,
@@ -378,18 +421,6 @@ export async function fiscalizeInvoice(
      WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
     [invoiceId, tenantId],
   );
-
-  const idem = `${operation}-${invoiceId}`;
-  // Upsert the fiscal request and bump attempts.
-  await pool.query(
-    `INSERT INTO fiscal_requests (tenant_id, invoice_id, operation, status, attempts, idempotency_key,
-                                  deadline_at)
-     VALUES (?, ?, ?, 'pending', 1, ?, DATE_ADD(NOW(), INTERVAL 48 HOUR))
-     ON DUPLICATE KEY UPDATE attempts = attempts + 1, status = 'pending', next_attempt_at = NULL`,
-    [tenantId, invoiceId, operation, idem],
-  );
-  const [[fr]] = await pool.query<any[]>(`SELECT attempts FROM fiscal_requests WHERE idempotency_key = ?`, [idem]);
-  const attempt = Number(fr?.attempts ?? 1);
 
   const payload: FiscalInvoice = {
     invoiceId,
@@ -436,7 +467,11 @@ export async function fiscalizeInvoice(
 
   // The ZKI is ours and is valid even when the transfer failed — it must be printed on the
   // receipt regardless, so it is stored on the failure path too. Only the JIR is missing.
+  // An unclassified failure counts as retryable: a transport hiccup a provider forgot to
+  // label must not kill the invoice.
   const permanent = result.retryable === false;
+  const error = result.error ?? 'Nepoznata greška';
+
   await pool.query(
     `UPDATE invoices SET zki = COALESCE(?, zki), fiscal_status = ? WHERE id = ?`,
     [result.zki ?? null, permanent ? 'failed' : 'pending', invoiceId],
@@ -444,10 +479,125 @@ export async function fiscalizeInvoice(
   await pool.query(
     `UPDATE fiscal_requests
      SET status = ?, zki = COALESCE(?, zki), last_error = ?,
-         next_attempt_at = ${permanent ? 'NULL' : 'DATE_ADD(NOW(), INTERVAL 5 MINUTE)'}
+         next_attempt_at = ${permanent ? 'NULL' : 'DATE_ADD(NOW(), INTERVAL ? MINUTE)'}
      WHERE idempotency_key = ?`,
-    [permanent ? 'failed' : 'pending', result.zki ?? null, result.error ?? 'Nepoznata greška', idem],
+    permanent
+      ? ['failed', result.zki ?? null, error, idem]
+      : ['pending', result.zki ?? null, error, backoffMinutes(attempt), idem],
   );
+
+  if (permanent) {
+    // Retrying cannot help — something has to be fixed by a human, so say so out loud
+    // instead of leaving the invoice quietly broken.
+    await notifyFiscalProblem(
+      tenantId,
+      invoiceId,
+      'Račun nije fiskaliziran',
+      `Porezna uprava je odbila račun ${inv.number_full ?? ''}: ${error}`.trim(),
+      `fiscal-failed-${invoiceId}`,
+    );
+  }
+}
+
+function backoffMinutes(attempt: number): number {
+  return Math.min(2 ** attempt, MAX_BACKOFF_MIN);
+}
+
+async function retryDeadlineHours(): Promise<number> {
+  const [[row]] = await pool.query<any[]>(
+    `SELECT setting_value FROM platform_settings WHERE setting_key = 'fiscal_retry_deadline_hours' LIMIT 1`,
+  );
+  const hours = Number(row?.setting_value);
+  return Number.isFinite(hours) && hours > 0 ? hours : 48;
+}
+
+async function notifyFiscalProblem(
+  tenantId: number,
+  invoiceId: number,
+  title: string,
+  body: string,
+  dedupeKey: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO notifications (tenant_id, severity, category, title, body, link, dedupe_key)
+     VALUES (?, 'danger', 'fiscal', ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE body = VALUES(body)`,
+    [tenantId, title, body.slice(0, 500), `/racuni/${invoiceId}`, dedupeKey],
+  );
+}
+
+/**
+ * Drains the retry queue. Everything that failed for a transport reason comes back through
+ * here on its own — until now the only way an invoice reached the tax authority after a
+ * failure was a human noticing and pressing a button.
+ */
+export async function drainFiscalQueue(): Promise<number> {
+  const [rows] = await pool.query<any[]>(
+    `SELECT tenant_id, invoice_id, operation, idempotency_key, attempts
+     FROM fiscal_requests
+     WHERE status = 'pending'
+       AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+       AND (deadline_at IS NULL OR deadline_at > NOW())
+       AND attempts < ?
+     ORDER BY tenant_id, id
+     LIMIT 100`,
+    [ATTEMPTS_HARD_CAP],
+  );
+
+  let processed = 0;
+  for (const r of rows) {
+    try {
+      // Bump BEFORE the call: a crash mid-send must still cost an attempt, or a poisonous
+      // invoice would be retried forever at full speed.
+      await pool.query(`UPDATE fiscal_requests SET attempts = attempts + 1 WHERE idempotency_key = ?`, [
+        r.idempotency_key,
+      ]);
+      await runFiscalRequest(
+        r.tenant_id,
+        r.invoice_id,
+        r.operation as 'fiscalize' | 'cancel',
+        r.idempotency_key,
+        Number(r.attempts) + 1,
+      );
+      processed++;
+    } catch (err) {
+      // One broken invoice must not stop the queue.
+      console.error(`[fiscal] retry failed for invoice ${r.invoice_id}`, err);
+    }
+  }
+
+  await expireOverdueFiscal();
+  return processed;
+}
+
+// Past the legal window for naknadna dostava and still not through. Stop retrying and tell
+// the landlord — this is the failure that silently costs money.
+async function expireOverdueFiscal(): Promise<void> {
+  const [rows] = await pool.query<any[]>(
+    `SELECT r.tenant_id, r.invoice_id, i.number_full
+     FROM fiscal_requests r
+     JOIN invoices i ON i.id = r.invoice_id
+     WHERE r.status = 'pending' AND r.deadline_at IS NOT NULL AND r.deadline_at < NOW()
+     LIMIT 50`,
+  );
+  if (rows.length === 0) return;
+
+  for (const r of rows) {
+    await pool.query(
+      `UPDATE fiscal_requests
+       SET status = 'failed', last_error = COALESCE(last_error, 'Istekao rok za naknadnu fiskalizaciju.')
+       WHERE invoice_id = ? AND status = 'pending'`,
+      [r.invoice_id],
+    );
+    await pool.query(`UPDATE invoices SET fiscal_status = 'failed' WHERE id = ?`, [r.invoice_id]);
+    await notifyFiscalProblem(
+      r.tenant_id,
+      r.invoice_id,
+      'Istekao rok za fiskalizaciju',
+      `Račun ${r.number_full ?? ''} nije zaprimljen kod Porezne uprave unutar propisanog roka. Otvorite račun i provjerite grešku.`.trim(),
+      `fiscal-overdue-${r.invoice_id}`,
+    );
+  }
 }
 
 // ---- Storno -----------------------------------------------------------------

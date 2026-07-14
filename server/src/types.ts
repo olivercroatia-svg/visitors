@@ -26,6 +26,9 @@ export interface UserRow {
   tenant_role: TenantRole;
   platform_role: PlatformRole;
   last_login_at: string | null;
+  // OibOper on the fiscal message — the OIB of the person issuing the invoice. Null
+  // means "same as the business", which is the normal case for a one-person obrt.
+  oib: string | null;
 }
 
 export interface BusinessProfileRow {

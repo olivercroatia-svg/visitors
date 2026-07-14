@@ -13,6 +13,8 @@ export interface User {
   tenant_role: 'owner' | 'member';
   platform_role: 'user' | 'admin';
   last_login_at: string | null;
+  // OIB operatera na fiskalnom računu; prazno = OIB obrta.
+  oib: string | null;
 }
 
 export interface BusinessProfile {
@@ -26,6 +28,8 @@ export interface BusinessProfile {
   postal_code: string | null;
   iban: string | null;
   vat_status: VatStatus;
+  // OznSlijed — 'N' = numeracija po naplatnom uređaju, 'P' = po poslovnom prostoru.
+  sequence_mark: 'P' | 'N';
   onboarding_completed: number;
 }
 

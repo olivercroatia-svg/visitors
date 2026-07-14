@@ -1,11 +1,12 @@
 import { useSearchParams } from 'react-router-dom';
-import { BadgeCheck, Briefcase, Building2, Home, MapPin, Tag } from 'lucide-react';
+import { BadgeCheck, Briefcase, Building2, Home, MapPin, ShieldCheck, Tag } from 'lucide-react';
 import { ProfileSection } from './ProfileSection';
 import { PremisesSection } from './PremisesSection';
 import { ServicesSection } from './ServicesSection';
 import { CompaniesSection } from './CompaniesSection';
 import { ObjectsSection } from '@/features/evisitor/ObjectsSection';
 import { CredentialsSection } from '@/features/evisitor/CredentialsSection';
+import { CertificateSection } from '@/features/fiscal/CertificateSection';
 import { cn } from '@/lib/utils';
 
 const TABS = [
@@ -13,6 +14,7 @@ const TABS = [
   { key: 'prostori', label: 'Prostori', icon: MapPin },
   { key: 'usluge', label: 'Usluge', icon: Tag },
   { key: 'tvrtke', label: 'Tvrtke', icon: Briefcase },
+  { key: 'fiskalizacija', label: 'Fiskalizacija', icon: ShieldCheck },
   { key: 'objekti', label: 'Objekti', icon: Home },
   { key: 'evisitor', label: 'eVisitor', icon: BadgeCheck },
 ] as const;
@@ -52,6 +54,7 @@ export function SettingsPage() {
       {active === 'prostori' && <PremisesSection />}
       {active === 'usluge' && <ServicesSection />}
       {active === 'tvrtke' && <CompaniesSection />}
+      {active === 'fiskalizacija' && <CertificateSection />}
       {active === 'objekti' && <ObjectsSection />}
       {active === 'evisitor' && <CredentialsSection />}
     </div>

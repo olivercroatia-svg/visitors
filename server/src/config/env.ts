@@ -27,6 +27,9 @@ export const env = {
   // The v2.7 spec prints XML-DSig algorithm URIs that do not exist in the W3C registry
   // (see fiscal/sign.ts). We emit the standard ones; set this if the service rejects them.
   fiscalXmldsigSpecUris: process.env.FISCAL_XMLDSIG_SPEC_URIS === 'true',
+  // How often the fiscal retry queue is drained (minutes). "Naknadna dostava" has a legal
+  // deadline (platform_settings.fiscal_retry_deadline_hours), so this must be well below it.
+  fiscalQueueIntervalMin: Number(process.env.FISCAL_QUEUE_INTERVAL_MIN ?? 5),
   evisitorProvider: process.env.EVISITOR_PROVIDER ?? 'mock',
   // Per-tenant credentials may override the base URL; these are the defaults each
   // `environment` resolves to. Note the test API lives on /testApi — www.evisitor.hr/test

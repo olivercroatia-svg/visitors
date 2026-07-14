@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { env } from '../config/env';
-import { loadCertificate } from './certStore';
+import { loadCertificate, markCertError, markCertVerified } from './certStore';
 import { signRacunZahtjev } from './sign';
 import type {
   FiscalInvoice,
@@ -27,6 +27,10 @@ const PAYMENT_MAP: Record<string, PaymentMethod> = {
 // The two errors that mean "your data or your certificate is wrong". Re-sending an
 // unchanged message can only produce the same rejection, so it must not be queued forever.
 const PERMANENT_ERRORS = new Set(['s001', 's002', 's003', 's004', 's005']);
+
+// The subset that says the certificate itself is the problem — those are mirrored onto the
+// certificate record, so the user sees them in Postavke → Fiskalizacija where they can act.
+const CERT_ERRORS = new Set(['s002', 's003', 's005']);
 
 export class FinaProvider implements FiscalizationProvider {
   readonly name = 'fina';
@@ -154,17 +158,22 @@ export class FinaProvider implements FiscalizationProvider {
     }
 
     const jir = extract(text, 'Jir');
-    if (jir) return { status: 'confirmed', jir, zki, retryable: false };
+    if (jir) {
+      await markCertVerified(invoice.tenantId);
+      return { status: 'confirmed', jir, zki, retryable: false };
+    }
 
     const code = extract(text, 'SifraGreske');
     const message = extract(text, 'PorukaGreske') ?? extract(text, 'Poruka');
 
     if (code) {
+      const error = `${code}: ${message ?? describeError(code)}`;
+      if (CERT_ERRORS.has(code)) await markCertError(invoice.tenantId, error);
       return {
         status: 'failed',
         zki,
         retryable: !PERMANENT_ERRORS.has(code),
-        error: `${code}: ${message ?? describeError(code)}`,
+        error,
       };
     }
 

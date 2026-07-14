@@ -15,3 +15,11 @@ server/dist/
 # HTZ eVisitor reference material — contains test-environment credentials.
 # Local only: the repo is public.
 API VISITOR/
+
+# Fiscal signing certificates and keys. These are qualified certificates with legal
+# effect — they live in the database (encrypted), never in the repo.
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
+import { isValidOib } from '../utils/oib';
 import { audit } from '../services/audit.service';
 import { CertError } from '../fiscal/cert';
 import { deleteCertificate, getCertView, saveCertificate } from '../fiscal/certStore';
@@ -20,6 +21,18 @@ const certSchema = z.object({
 });
 
 const sequenceSchema = z.object({ sequence_mark: z.enum(['P', 'N']) });
+
+// OibOper — the OIB of the person issuing the invoice. Empty means "the same OIB as the
+// business", which is what a one-person obrt always wants; invoice.service COALESCEs it.
+const operatorSchema = z.object({
+  oib: z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === '' || isValidOib(v),
+      'Neispravan OIB (mora imati 11 znamenki i ispravnu kontrolnu znamenku).',
+    ),
+});
 
 function handleCertError(err: unknown, res: import('express').Response): boolean {
   if (err instanceof CertError) {
@@ -75,6 +88,18 @@ fiscalRouter.put('/sequence-mark', wrap(async (req, res) => {
     tenantId: req.auth!.tenantId, userId: req.auth!.userId,
     action: 'fiscal.sequence_mark', entity: 'business_profile',
     meta: { sequence_mark }, ip: req.ip,
+  });
+  res.json({ ok: true });
+}));
+
+fiscalRouter.put('/operator-oib', wrap(async (req, res) => {
+  const { oib } = operatorSchema.parse(req.body);
+  const value = oib === '' ? null : oib;
+  await pool.query(`UPDATE users SET oib = ? WHERE id = ?`, [value, req.auth!.userId]);
+  await audit({
+    tenantId: req.auth!.tenantId, userId: req.auth!.userId,
+    action: 'fiscal.operator_oib', entity: 'user', entityId: req.auth!.userId,
+    meta: { oib: value }, ip: req.ip,
   });
   res.json({ ok: true });
 }));

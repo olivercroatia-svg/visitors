@@ -87,6 +87,7 @@ export async function registerTenant(input: RegisterInput): Promise<{ ctx: AuthC
       tenant_role: 'owner',
       platform_role: 'user',
       last_login_at: null,
+      oib: null,
     };
     return { ctx, user };
   } catch (err) {
@@ -102,7 +103,7 @@ export async function verifyCredentials(
   password: string,
 ): Promise<{ ctx: AuthContext; user: UserRow } | null> {
   const [rows] = await pool.query<any[]>(
-    `SELECT id, tenant_id, email, password_hash, full_name, tenant_role, platform_role, last_login_at
+    `SELECT id, tenant_id, email, password_hash, full_name, tenant_role, platform_role, last_login_at, oib
      FROM users WHERE email = ? LIMIT 1`,
     [email.toLowerCase()],
   );
@@ -127,13 +128,14 @@ export async function verifyCredentials(
     tenant_role: row.tenant_role,
     platform_role: row.platform_role,
     last_login_at: row.last_login_at,
+    oib: row.oib,
   };
   return { ctx, user };
 }
 
 export async function getUserWithProfile(userId: number): Promise<{ user: UserRow; profile: any } | null> {
   const [users] = await pool.query<any[]>(
-    `SELECT id, tenant_id, email, full_name, tenant_role, platform_role, last_login_at
+    `SELECT id, tenant_id, email, full_name, tenant_role, platform_role, last_login_at, oib
      FROM users WHERE id = ? LIMIT 1`,
     [userId],
   );
@@ -141,7 +143,8 @@ export async function getUserWithProfile(userId: number): Promise<{ user: UserRo
   const user = users[0] as UserRow;
 
   const [profiles] = await pool.query<any[]>(
-    `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status, onboarding_completed
+    `SELECT id, tenant_id, type, legal_name, oib, address, city, postal_code, iban, vat_status,
+            sequence_mark, onboarding_completed
      FROM business_profiles WHERE tenant_id = ? LIMIT 1`,
     [user.tenant_id],
   );

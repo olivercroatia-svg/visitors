@@ -8,6 +8,10 @@ import { CertError, loadP12, type FiscalCert } from './cert';
 
 const cache = new Map<number, { cert: FiscalCert; environment: 'test' | 'prod' }>();
 
+// p12_ct is VARBINARY(16384). A real .p12 is 2–4 KB; anything near the column limit would
+// fail inside MySQL and reach the user as a 500, so it is rejected up front instead.
+const MAX_P12_BYTES = 12 * 1024;
+
 export interface CertView {
   configured: boolean;
   filename: string | null;
@@ -58,6 +62,12 @@ export async function saveCertificate(
   environment: 'test' | 'prod',
   filename: string | null,
 ): Promise<FiscalCert> {
+  if (p12.length > MAX_P12_BYTES) {
+    throw new CertError(
+      'Datoteka certifikata je prevelika (najviše 12 KB). Provjerite jeste li odabrali .p12 datoteku.',
+    );
+  }
+
   const cert = loadP12(p12, password);
 
   if (!cert.oib) {
@@ -102,6 +112,23 @@ export async function saveCertificate(
 
   cache.set(tenantId, { cert, environment });
   return cert;
+}
+
+// The certificate only proves itself when the authority accepts a signature made with it.
+// These two mirror that verdict onto the Settings screen, so a rejected certificate is
+// visible where it can actually be replaced — not only on the invoice that failed.
+export async function markCertVerified(tenantId: number): Promise<void> {
+  await pool.query(
+    `UPDATE fiscal_certificates SET last_verified_at = NOW(), last_error = NULL WHERE tenant_id = ?`,
+    [tenantId],
+  );
+}
+
+export async function markCertError(tenantId: number, message: string): Promise<void> {
+  await pool.query(`UPDATE fiscal_certificates SET last_error = ? WHERE tenant_id = ?`, [
+    message.slice(0, 500),
+    tenantId,
+  ]);
 }
 
 export async function deleteCertificate(tenantId: number): Promise<void> {
