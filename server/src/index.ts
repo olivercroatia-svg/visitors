@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './config/env';
 import { apiRouter } from './routes';
@@ -9,7 +10,12 @@ import { ping } from './db/pool';
 
 const app = express();
 
+// Behind Nginx on the VPS — makes req.ip the real client, which the auth rate limiter needs.
 app.set('trust proxy', 1);
+// The API only ever answers JSON, so the interesting headers here are nosniff, frameguard,
+// HSTS and a stripped X-Powered-By. CSP is left at helmet's default; it costs nothing on a
+// JSON response and is correct if this ever serves anything else.
+app.use(helmet());
 app.use(
   cors({
     origin: env.clientUrl,

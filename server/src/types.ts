@@ -7,6 +7,10 @@ export interface AuthContext {
   userId: number;
   tenantId: number;
   platformRole: PlatformRole;
+  tenantRole: TenantRole;
+  // Bumped on logout (users.token_version). A token whose version is stale is refused, which
+  // is the only thing that makes a session revocable before its 30-day expiry.
+  tokenVersion: number;
 }
 
 declare global {

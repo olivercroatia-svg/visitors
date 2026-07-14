@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { audit } from '../services/audit.service';
 
+// Reads stay open — the invoice form needs the premise/device pickers. Writes are owner-only:
+// premise.code is the "POSL" part of every invoice number, and deactivating a premise takes its
+// devices with it.
 export const premisesRouter = Router();
 premisesRouter.use(requireAuth);
 
@@ -56,6 +59,7 @@ premisesRouter.get(
 
 premisesRouter.post(
   '/',
+  requireOwner,
   wrap(async (req, res) => {
     const input = premiseSchema.parse(req.body);
     try {
@@ -93,6 +97,7 @@ premisesRouter.post(
 
 premisesRouter.put(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const input = premiseSchema.parse(req.body);
@@ -129,6 +134,7 @@ premisesRouter.put(
 // Soft-deactivate (keeps history / referenced invoices intact).
 premisesRouter.delete(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const [result] = await pool.query<any>(

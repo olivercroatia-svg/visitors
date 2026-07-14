@@ -17,20 +17,55 @@ export function signToken(ctx: AuthContext): string {
   return jwt.sign(ctx, env.jwtSecret, { expiresIn: '30d' });
 }
 
-export function verifyToken(token: string): AuthContext | null {
+// What the cookie proves: this token was signed by us and names a user. Everything that can
+// change during the token's 30-day life — the roles, the tenant, whether the user still
+// exists — is deliberately NOT taken from here. See loadSession.
+export interface TokenClaims {
+  userId: number;
+  tokenVersion: number;
+}
+
+export function verifyToken(token: string): TokenClaims | null {
   try {
-    const decoded = jwt.verify(token, env.jwtSecret) as jwt.JwtPayload & AuthContext;
-    if (typeof decoded.userId !== 'number' || typeof decoded.tenantId !== 'number') {
-      return null;
-    }
+    const decoded = jwt.verify(token, env.jwtSecret) as jwt.JwtPayload & Partial<AuthContext>;
+    if (typeof decoded.userId !== 'number') return null;
     return {
       userId: decoded.userId,
-      tenantId: decoded.tenantId,
-      platformRole: decoded.platformRole === 'admin' ? 'admin' : 'user',
+      // Tokens signed before token_version existed carry no version; treat them as version 0,
+      // which is the column default, so existing sessions keep working across the deploy.
+      tokenVersion: typeof decoded.tokenVersion === 'number' ? decoded.tokenVersion : 0,
     };
   } catch {
     return null;
   }
+}
+
+// The authorization state of a request comes from the database on every request, never from
+// the token. That is what makes deleting a user, demoting an admin, or logging out take
+// effect immediately instead of up to 30 days later. One indexed primary-key read.
+export async function loadSession(claims: TokenClaims): Promise<AuthContext | null> {
+  const [rows] = await pool.query<any[]>(
+    `SELECT id, tenant_id, platform_role, tenant_role, token_version
+     FROM users WHERE id = ? LIMIT 1`,
+    [claims.userId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  if (Number(row.token_version) !== claims.tokenVersion) return null;
+
+  return {
+    userId: row.id,
+    tenantId: row.tenant_id,
+    platformRole: row.platform_role,
+    tenantRole: row.tenant_role,
+    tokenVersion: Number(row.token_version),
+  };
+}
+
+// Invalidates every token issued for this user. Used by logout — clearing the cookie only
+// removes the browser's copy, it does nothing to a token that has already been captured.
+export async function revokeSessions(userId: number): Promise<void> {
+  await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = ?', [userId]);
 }
 
 export async function emailExists(email: string): Promise<boolean> {
@@ -78,7 +113,13 @@ export async function registerTenant(input: RegisterInput): Promise<{ ctx: AuthC
 
     await conn.commit();
 
-    const ctx: AuthContext = { userId, tenantId, platformRole: 'user' };
+    const ctx: AuthContext = {
+      userId,
+      tenantId,
+      platformRole: 'user',
+      tenantRole: 'owner',
+      tokenVersion: 0,
+    };
     const user: UserRow = {
       id: userId,
       tenant_id: tenantId,
@@ -103,7 +144,8 @@ export async function verifyCredentials(
   password: string,
 ): Promise<{ ctx: AuthContext; user: UserRow } | null> {
   const [rows] = await pool.query<any[]>(
-    `SELECT id, tenant_id, email, password_hash, full_name, tenant_role, platform_role, last_login_at, oib
+    `SELECT id, tenant_id, email, password_hash, full_name, tenant_role, platform_role,
+            last_login_at, oib, token_version
      FROM users WHERE email = ? LIMIT 1`,
     [email.toLowerCase()],
   );
@@ -119,6 +161,8 @@ export async function verifyCredentials(
     userId: row.id,
     tenantId: row.tenant_id,
     platformRole: row.platform_role,
+    tenantRole: row.tenant_role,
+    tokenVersion: Number(row.token_version),
   };
   const user: UserRow = {
     id: row.id,

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { audit } from '../services/audit.service';
 
@@ -27,8 +27,12 @@ servicesRouter.get(
   }),
 );
 
+// The price list is shared tenant configuration, so writing it is owner-only. Note this is NOT
+// a tax boundary: an invoice line carries its own vat_category (draftSchema.items), so anyone
+// who may issue invoices already picks the category per line. Reads stay open.
 servicesRouter.post(
   '/',
+  requireOwner,
   wrap(async (req, res) => {
     const input = serviceSchema.parse(req.body);
     const [result] = await pool.query<any>(
@@ -50,6 +54,7 @@ servicesRouter.post(
 
 servicesRouter.put(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const input = serviceSchema.parse(req.body);
@@ -68,6 +73,7 @@ servicesRouter.put(
 
 servicesRouter.delete(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const [result] = await pool.query<any>(

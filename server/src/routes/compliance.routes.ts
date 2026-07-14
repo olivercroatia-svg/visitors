@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { audit } from '../services/audit.service';
 import { getComplianceOverview } from '../services/compliance.service';
@@ -23,9 +23,12 @@ const vatSchema = z.object({
   reason: z.string().max(255).nullable().optional(),
 });
 
-// Guided VAT status transition (effective-dated).
+// Guided VAT status transition (effective-dated). Owner-only: resolveVatStatusOnDate freezes
+// this onto every invoice issued from the effective date on, so it is a tax decision, not a
+// setting. Reading the overview stays open.
 complianceRouter.post(
   '/vat-status',
+  requireOwner,
   wrap(async (req, res) => {
     const input = vatSchema.parse(req.body);
     await changeVatStatus(
@@ -49,6 +52,7 @@ const settingsSchema = z.object({
 // Compliance inputs: reverse-charge flags + per-bed tax calculator defaults.
 complianceRouter.put(
   '/settings',
+  requireOwner,
   wrap(async (req, res) => {
     const input = settingsSchema.parse(req.body);
     await pool.query(

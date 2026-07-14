@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { isValidOib } from '../utils/oib';
 import { audit } from '../services/audit.service';
@@ -46,7 +46,9 @@ fiscalRouter.get('/certificate', wrap(async (req, res) => {
   res.json(await getCertView(req.auth!.tenantId));
 }));
 
-fiscalRouter.put('/certificate', wrap(async (req, res) => {
+// The signing certificate and the sequence mark are the business's fiscal identity: uploading
+// or deleting the .p12 is not something a staff member should be able to do. Reads stay open.
+fiscalRouter.put('/certificate', requireOwner, wrap(async (req, res) => {
   const input = certSchema.parse(req.body);
   try {
     const cert = await saveCertificate(
@@ -67,7 +69,7 @@ fiscalRouter.put('/certificate', wrap(async (req, res) => {
   }
 }));
 
-fiscalRouter.delete('/certificate', wrap(async (req, res) => {
+fiscalRouter.delete('/certificate', requireOwner, wrap(async (req, res) => {
   await deleteCertificate(req.auth!.tenantId);
   await audit({
     tenantId: req.auth!.tenantId, userId: req.auth!.userId,
@@ -78,7 +80,7 @@ fiscalRouter.delete('/certificate', wrap(async (req, res) => {
 
 // OznSlijed — the taxpayer declares to the tax authority whether invoice numbers run per
 // premise or per device, and the message must match that declaration.
-fiscalRouter.put('/sequence-mark', wrap(async (req, res) => {
+fiscalRouter.put('/sequence-mark', requireOwner, wrap(async (req, res) => {
   const { sequence_mark } = sequenceSchema.parse(req.body);
   await pool.query(`UPDATE business_profiles SET sequence_mark = ? WHERE tenant_id = ?`, [
     sequence_mark,

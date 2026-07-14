@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { audit } from '../services/audit.service';
 import { CODEBOOK_KINDS } from '../evisitor/codebooks';
@@ -42,7 +42,9 @@ evisitorRouter.get('/credentials', wrap(async (req, res) => {
   res.json(await getCredentialsView(req.auth!.tenantId));
 }));
 
-evisitorRouter.put('/credentials', wrap(async (req, res) => {
+// eVisitor credentials are stored encrypted and used to act as the business in a state
+// system — writing them is an owner-only decision. Check-in/out and codebook reads are not.
+evisitorRouter.put('/credentials', requireOwner, wrap(async (req, res) => {
   const input = credentialsSchema.parse(req.body);
   try {
     await saveCredentials(req.auth!.tenantId, input);
@@ -57,7 +59,7 @@ evisitorRouter.put('/credentials', wrap(async (req, res) => {
   }
 }));
 
-evisitorRouter.delete('/credentials', wrap(async (req, res) => {
+evisitorRouter.delete('/credentials', requireOwner, wrap(async (req, res) => {
   await deleteCredentials(req.auth!.tenantId);
   await audit({
     tenantId: req.auth!.tenantId, userId: req.auth!.userId,

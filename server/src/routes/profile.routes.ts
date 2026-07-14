@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
 import { isValidOib } from '../utils/oib';
 import { audit } from '../services/audit.service';
@@ -43,6 +43,7 @@ const profileSchema = z.object({
 // and invoice freezing stay correct.
 profileRouter.put(
   '/',
+  requireOwner,
   wrap(async (req, res) => {
     const input = profileSchema.parse(req.body);
     const norm = (v?: string) => (v && v.trim() !== '' ? v.trim() : null);
