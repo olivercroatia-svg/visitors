@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Pencil, Trash2, Users, Mail, Phone } from 'lucide-react';
+import {
+  Plus, Search, Pencil, Trash2, Users, Mail, Phone, AlertTriangle, CheckCircle2,
+} from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -9,6 +11,8 @@ import { useToast } from '@/components/ui/Toast';
 import { useConfirm } from '@/components/ui/Confirm';
 import { useCodebook } from '@/features/evisitor/api';
 import { api, ApiError } from '@/lib/api';
+import { DocumentScanner } from './DocumentScanner';
+import type { ScanResult } from './scan';
 
 export interface Guest {
   id: number;
@@ -32,8 +36,12 @@ export interface Guest {
   birth_city: string | null;
   residence_country_code: string | null;
   residence_city: string | null;
+  residence_city_code: string | null;
   residence_address: string | null;
   doc_type_code: string | null;
+  visa_type: string | null;
+  visa_number: string | null;
+  visa_validity_date: string | null;
 }
 
 export function GuestsPage() {
@@ -179,8 +187,110 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
   });
   const [loading, setLoading] = useState(false);
 
-  function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
+  type FormKey = keyof typeof form;
+
+  // Which fields the scan filled (ring), which the MRZ proved (check), which it disagrees with
+  // (Zamijeni chip), and which the user has typed in themselves.
+  const [scanned, setScanned] = useState<Set<string>>(new Set());
+  const [verified, setVerified] = useState<Set<string>>(new Set());
+  const [conflicts, setConflicts] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+
+  function set<K extends FormKey>(k: K, v: (typeof form)[K]) {
     setForm((f) => ({ ...f, [k]: v }));
+    setTouched((t) => new Set(t).add(k));
+    // Once the user edits a field themselves, our annotations on it are stale.
+    setScanned((s) => {
+      if (!s.has(k)) return s;
+      const n = new Set(s);
+      n.delete(k);
+      return n;
+    });
+    setConflicts((c) => {
+      if (!(k in c)) return c;
+      const n = { ...c };
+      delete n[k];
+      return n;
+    });
+  }
+
+  /**
+   * Fill the form from a scan. This is the whole point of the review stop: it writes to form
+   * state and nothing else — no request, no save.
+   *
+   * A value the user owns is never silently replaced; the scan's version is offered as a chip
+   * instead. "Owns" means: an existing guest's stored data, or a field this user has typed in.
+   * It does NOT mean the untouched `country: 'Hrvatska'` default — treating a default as user
+   * input would make every foreign guest raise a pointless conflict.
+   */
+  function applyScan(r: ScanResult) {
+    const nextConflicts: Record<string, string> = {};
+    const nextScanned = new Set<string>();
+
+    setForm((f) => {
+      const next = { ...f };
+      for (const [key, value] of Object.entries(r.fields)) {
+        if (value == null || value === '') continue;
+        if (!(key in next)) continue; // e.g. fields the form does not carry
+        const k = key as FormKey;
+
+        const current = String(next[k] ?? '').trim();
+        const userOwns = current !== '' && (edit !== undefined || touched.has(k));
+
+        if (userOwns) {
+          if (current !== value) nextConflicts[k] = value;
+        } else {
+          (next[k] as string) = value;
+          nextScanned.add(k);
+        }
+      }
+      return next;
+    });
+
+    setScanned(nextScanned);
+    setConflicts(nextConflicts);
+    setVerified(new Set(r.verified_fields));
+  }
+
+  function acceptConflict(k: string, value: string) {
+    setForm((f) => ({ ...f, [k]: value }));
+    setConflicts((c) => {
+      const n = { ...c };
+      delete n[k];
+      return n;
+    });
+    setScanned((s) => new Set(s).add(k));
+  }
+
+  /** Highlights a field the scan filled, so the user knows what a machine read and should check. */
+  const ring = (k: FormKey) => (scanned.has(k) ? 'ring-2 ring-primary/30' : '');
+
+  /** Rendered under a field, not as a component, so it never remounts the input on re-render. */
+  function scanNote(k: FormKey) {
+    const conflict = conflicts[k];
+    if (conflict) {
+      return (
+        <button
+          type="button"
+          onClick={() => acceptConflict(k, conflict)}
+          className="mt-1 flex w-full items-center gap-1.5 rounded-lg border border-warning/40 bg-warning-soft px-2 py-1 text-left text-xs text-foreground hover:opacity-80"
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0 text-warning" />
+          <span className="truncate">
+            Prepoznato: <strong>{conflict}</strong>
+          </span>
+          <span className="ml-auto shrink-0 font-medium text-warning">Zamijeni</span>
+        </button>
+      );
+    }
+    if (verified.has(k)) {
+      return (
+        <p className="mt-1 flex items-center gap-1 text-xs text-success">
+          <CheckCircle2 className="h-3 w-3" /> Potvrđeno MRZ zapisom.
+        </p>
+      );
+    }
+    return null;
   }
 
   async function save() {
@@ -218,28 +328,67 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
       }
     >
       <div className="space-y-4">
+        <DocumentScanner onResult={applyScan} />
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="Ime">
-            <Input value={form.first_name} onChange={(e) => set('first_name', e.target.value)} autoFocus />
+            <Input
+              value={form.first_name}
+              onChange={(e) => set('first_name', e.target.value)}
+              className={ring('first_name')}
+              autoFocus
+            />
+            {scanNote('first_name')}
           </Field>
           <Field label="Prezime">
-            <Input value={form.last_name} onChange={(e) => set('last_name', e.target.value)} />
+            <Input
+              value={form.last_name}
+              onChange={(e) => set('last_name', e.target.value)}
+              className={ring('last_name')}
+            />
+            {scanNote('last_name')}
           </Field>
         </div>
-        <Field label="Država">
-          <Input value={form.country} onChange={(e) => set('country', e.target.value)} placeholder="Hrvatska" />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Srednje ime" hint="Neobavezno.">
+            <Input
+              value={form.middle_name}
+              onChange={(e) => set('middle_name', e.target.value)}
+              className={ring('middle_name')}
+            />
+            {scanNote('middle_name')}
+          </Field>
+          <Field label="Država">
+            <Input
+              value={form.country}
+              onChange={(e) => set('country', e.target.value)}
+              placeholder="Hrvatska"
+              className={ring('country')}
+            />
+            {scanNote('country')}
+          </Field>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Vrsta dokumenta">
-            <Select value={form.doc_type} onChange={(e) => set('doc_type', e.target.value as typeof form.doc_type)}>
+            <Select
+              value={form.doc_type}
+              onChange={(e) => set('doc_type', e.target.value as typeof form.doc_type)}
+              className={ring('doc_type')}
+            >
               <option value="">—</option>
               <option value="osobna">Osobna iskaznica</option>
               <option value="putovnica">Putovnica</option>
               <option value="ostalo">Ostalo</option>
             </Select>
+            {scanNote('doc_type')}
           </Field>
           <Field label="Broj dokumenta">
-            <Input value={form.doc_number} onChange={(e) => set('doc_number', e.target.value)} />
+            <Input
+              value={form.doc_number}
+              onChange={(e) => set('doc_number', e.target.value)}
+              className={ring('doc_number')}
+            />
+            {scanNote('doc_number')}
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -248,6 +397,24 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
           </Field>
           <Field label="Telefon">
             <Input value={form.phone} onChange={(e) => set('phone', e.target.value)} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Adresa" hint="Za račun.">
+            <Input
+              value={form.address}
+              onChange={(e) => set('address', e.target.value)}
+              className={ring('address')}
+            />
+            {scanNote('address')}
+          </Field>
+          <Field label="Grad" hint="Za račun.">
+            <Input
+              value={form.city}
+              onChange={(e) => set('city', e.target.value)}
+              className={ring('city')}
+            />
+            {scanNote('city')}
           </Field>
         </div>
         <Field label="Napomena">
@@ -269,14 +436,21 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
                   type="date"
                   value={form.date_of_birth}
                   onChange={(e) => set('date_of_birth', e.target.value)}
+                  className={ring('date_of_birth')}
                 />
+                {scanNote('date_of_birth')}
               </Field>
               <Field label="Spol">
-                <Select value={form.gender} onChange={(e) => set('gender', e.target.value as typeof form.gender)}>
+                <Select
+                  value={form.gender}
+                  onChange={(e) => set('gender', e.target.value as typeof form.gender)}
+                  className={ring('gender')}
+                >
                   <option value="">—</option>
                   <option value="muski">Muški</option>
                   <option value="zenski">Ženski</option>
                 </Select>
+                {scanNote('gender')}
               </Field>
             </div>
 
@@ -286,16 +460,29 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
                   value={form.citizenship_code}
                   onChange={(v) => set('citizenship_code', v)}
                   options={countries.data ?? []}
+                  className={ring('citizenship_code')}
                 />
+                {scanNote('citizenship_code')}
               </Field>
               <Field label="Država rođenja">
                 <CountrySelect
                   value={form.birth_country_code}
                   onChange={(v) => set('birth_country_code', v)}
                   options={countries.data ?? []}
+                  className={ring('birth_country_code')}
                 />
+                {scanNote('birth_country_code')}
               </Field>
             </div>
+
+            <Field label="Grad rođenja">
+              <Input
+                value={form.birth_city}
+                onChange={(e) => set('birth_city', e.target.value)}
+                className={ring('birth_city')}
+              />
+              {scanNote('birth_city')}
+            </Field>
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="Država prebivališta">
@@ -303,7 +490,9 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
                   value={form.residence_country_code}
                   onChange={(v) => set('residence_country_code', v)}
                   options={countries.data ?? []}
+                  className={ring('residence_country_code')}
                 />
+                {scanNote('residence_country_code')}
               </Field>
               <Field
                 label="Grad prebivališta"
@@ -312,9 +501,20 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
                 <Input
                   value={form.residence_city}
                   onChange={(e) => set('residence_city', e.target.value)}
+                  className={ring('residence_city')}
                 />
+                {scanNote('residence_city')}
               </Field>
             </div>
+
+            <Field label="Adresa prebivališta">
+              <Input
+                value={form.residence_address}
+                onChange={(e) => set('residence_address', e.target.value)}
+                className={ring('residence_address')}
+              />
+              {scanNote('residence_address')}
+            </Field>
 
             <Field
               label="Šifra vrste dokumenta"
@@ -324,7 +524,9 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
                 value={form.doc_type_code}
                 onChange={(e) => set('doc_type_code', e.target.value)}
                 placeholder="008"
+                className={ring('doc_type_code')}
               />
+              {scanNote('doc_type_code')}
             </Field>
           </div>
         </div>
@@ -337,13 +539,15 @@ function CountrySelect({
   value,
   onChange,
   options,
+  className,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { code: string; label: string }[];
+  className?: string;
 }) {
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
       <option value="">—</option>
       {options.map((c) => (
         <option key={c.code} value={c.code}>
