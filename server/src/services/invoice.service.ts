@@ -4,6 +4,7 @@ import { audit } from './audit.service';
 import { computeTotals, VAT_EXEMPTION_CLAUSE, type LineInput, type DiscountType } from './pricing.service';
 import { getOnboardingStatus } from './onboarding.service';
 import { resolveVatStatusOnDate } from './vat.service';
+import { deviceInPremise, ownsGuest, ownsPremise } from '../utils/ownership';
 import { getFiscalProvider, type FiscalInvoice } from '../fiscal';
 
 export interface DraftInput {
@@ -39,9 +40,9 @@ export async function getInvoiceFull(tenantId: number, id: number) {
             p.name AS premise_name, p.code AS premise_code,
             d.code AS device_code
      FROM invoices i
-     LEFT JOIN guests g ON g.id = i.guest_id
-     LEFT JOIN premises p ON p.id = i.premise_id
-     LEFT JOIN devices d ON d.id = i.device_id
+     LEFT JOIN guests g ON g.id = i.guest_id AND g.tenant_id = i.tenant_id
+     LEFT JOIN premises p ON p.id = i.premise_id AND p.tenant_id = i.tenant_id
+     LEFT JOIN devices d ON d.id = i.device_id AND d.tenant_id = i.tenant_id
      WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
     [id, tenantId],
   );
@@ -109,6 +110,22 @@ export async function createDraft(tenantId: number, userId: number, input: Draft
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+
+    // Every foreign key on the invoice must belong to this tenant. Without this a draft can
+    // reference another tenant's premise, device or guest, and the reads join those rows back
+    // out — the guest carries name and address, so it is their data, not just a label.
+    // Checked here, on the draft, because that is where the row is first written.
+    if (!(await ownsPremise(tenantId, input.premise_id, conn))) {
+      throw new InvoiceError(422, 'Poslovni prostor nije pronađen.');
+    }
+    // Not just "is this my device" — it must be a device OF THIS PREMISE, or the invoice number
+    // is built from a pair that does not exist and can collide with a real one.
+    if (!(await deviceInPremise(tenantId, input.device_id, input.premise_id, conn))) {
+      throw new InvoiceError(422, 'Naplatni uređaj ne pripada odabranom poslovnom prostoru.');
+    }
+    if (input.guest_id && !(await ownsGuest(tenantId, input.guest_id, conn))) {
+      throw new InvoiceError(422, 'Gost nije pronađen.');
+    }
 
     // Copy the buyer company onto the invoice (like guest_name_cache). The invoice
     // owns its copy from here on, so later editing or archiving the company never
@@ -225,9 +242,12 @@ export async function issueInvoice(tenantId: number, userId: number, invoiceId: 
       `SELECT code FROM premises WHERE id = ? AND tenant_id = ?`,
       [inv.premise_id, tenantId],
     );
+    // premise_id is part of the lookup, not just tenant_id: a draft written before that rule
+    // existed can still carry a device from another premise, and issuing is the last moment
+    // before the number becomes permanent and gets fiscalized.
     const [[device]] = await conn.query<any[]>(
-      `SELECT code FROM devices WHERE id = ? AND tenant_id = ?`,
-      [inv.device_id, tenantId],
+      `SELECT code FROM devices WHERE id = ? AND tenant_id = ? AND premise_id = ?`,
+      [inv.device_id, tenantId, inv.premise_id],
     );
     if (!premise || !device) throw new InvoiceError(422, 'Nedostaje poslovni prostor ili naplatni uređaj.');
 
@@ -357,6 +377,19 @@ export async function fiscalizeInvoice(
   invoiceId: number,
   operation: 'fiscalize' | 'cancel',
 ): Promise<void> {
+  // Nothing is written until we know the invoice is this tenant's AND is actually issued.
+  // Without it, /retry-fiscal enqueues on an id alone: a draft (no number, no issue date) gets
+  // sent to the tax authority as an empty invoice, and an id belonging to another tenant
+  // reaches their queue row through the upsert below.
+  const [[inv]] = await pool.query<any[]>(
+    `SELECT status FROM invoices WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [invoiceId, tenantId],
+  );
+  if (!inv) throw new InvoiceError(404, 'Račun nije pronađen.');
+  if (inv.status !== 'issued') {
+    throw new InvoiceError(409, 'Fiskalizirati se može samo izdani račun.');
+  }
+
   const idem = `${operation}-${invoiceId}`;
   const deadlineHours = await retryDeadlineHours();
 
@@ -370,8 +403,8 @@ export async function fiscalizeInvoice(
     [tenantId, invoiceId, operation, idem, deadlineHours],
   );
   const [[fr]] = await pool.query<any[]>(
-    `SELECT attempts FROM fiscal_requests WHERE idempotency_key = ?`,
-    [idem],
+    `SELECT attempts FROM fiscal_requests WHERE tenant_id = ? AND idempotency_key = ?`,
+    [tenantId, idem],
   );
 
   await runFiscalRequest(tenantId, invoiceId, operation, idem, Number(fr?.attempts ?? 1));
@@ -401,8 +434,8 @@ async function runFiscalRequest(
   const [[codes]] = await pool.query<any[]>(
     `SELECT p.code AS premise_code, d.code AS device_code
      FROM invoices i
-     JOIN premises p ON p.id = i.premise_id
-     JOIN devices d ON d.id = i.device_id
+     JOIN premises p ON p.id = i.premise_id AND p.tenant_id = i.tenant_id
+     JOIN devices d ON d.id = i.device_id AND d.tenant_id = i.tenant_id
      WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
     [invoiceId, tenantId],
   );
@@ -417,7 +450,7 @@ async function runFiscalRequest(
 
   const [[recipient]] = await pool.query<any[]>(
     `SELECT c.oib FROM invoices i
-     LEFT JOIN companies c ON c.id = i.company_id
+     LEFT JOIN companies c ON c.id = i.company_id AND c.tenant_id = i.tenant_id
      WHERE i.id = ? AND i.tenant_id = ? LIMIT 1`,
     [invoiceId, tenantId],
   );
@@ -459,8 +492,9 @@ async function runFiscalRequest(
       [result.jir ?? null, result.zki ?? null, invoiceId],
     );
     await pool.query(
-      `UPDATE fiscal_requests SET status='confirmed', jir=?, zki=?, last_error=NULL WHERE idempotency_key=?`,
-      [result.jir ?? null, result.zki ?? null, idem],
+      `UPDATE fiscal_requests SET status='confirmed', jir=?, zki=?, last_error=NULL
+       WHERE tenant_id = ? AND idempotency_key = ?`,
+      [result.jir ?? null, result.zki ?? null, tenantId, idem],
     );
     return;
   }
@@ -480,10 +514,10 @@ async function runFiscalRequest(
     `UPDATE fiscal_requests
      SET status = ?, zki = COALESCE(?, zki), last_error = ?,
          next_attempt_at = ${permanent ? 'NULL' : 'DATE_ADD(NOW(), INTERVAL ? MINUTE)'}
-     WHERE idempotency_key = ?`,
+     WHERE tenant_id = ? AND idempotency_key = ?`,
     permanent
-      ? ['failed', result.zki ?? null, error, idem]
-      : ['pending', result.zki ?? null, error, backoffMinutes(attempt), idem],
+      ? ['failed', result.zki ?? null, error, tenantId, idem]
+      : ['pending', result.zki ?? null, error, backoffMinutes(attempt), tenantId, idem],
   );
 
   if (permanent) {
@@ -573,10 +607,13 @@ export async function drainFiscalQueue(): Promise<number> {
 // Past the legal window for naknadna dostava and still not through. Stop retrying and tell
 // the landlord — this is the failure that silently costs money.
 async function expireOverdueFiscal(): Promise<void> {
+  // The join must match the tenant too: a queue row and the invoice it points at always belong
+  // to the same tenant, and comparing them here means a mismatched row can never expire — and
+  // so never flip someone else's invoice to 'failed' or leak its number into a notification.
   const [rows] = await pool.query<any[]>(
     `SELECT r.tenant_id, r.invoice_id, i.number_full
      FROM fiscal_requests r
-     JOIN invoices i ON i.id = r.invoice_id
+     JOIN invoices i ON i.id = r.invoice_id AND i.tenant_id = r.tenant_id
      WHERE r.status = 'pending' AND r.deadline_at IS NOT NULL AND r.deadline_at < NOW()
      LIMIT 50`,
   );
@@ -586,10 +623,13 @@ async function expireOverdueFiscal(): Promise<void> {
     await pool.query(
       `UPDATE fiscal_requests
        SET status = 'failed', last_error = COALESCE(last_error, 'Istekao rok za naknadnu fiskalizaciju.')
-       WHERE invoice_id = ? AND status = 'pending'`,
-      [r.invoice_id],
+       WHERE tenant_id = ? AND invoice_id = ? AND status = 'pending'`,
+      [r.tenant_id, r.invoice_id],
     );
-    await pool.query(`UPDATE invoices SET fiscal_status = 'failed' WHERE id = ?`, [r.invoice_id]);
+    await pool.query(`UPDATE invoices SET fiscal_status = 'failed' WHERE id = ? AND tenant_id = ?`, [
+      r.invoice_id,
+      r.tenant_id,
+    ]);
     await notifyFiscalProblem(
       r.tenant_id,
       r.invoice_id,
@@ -620,8 +660,15 @@ export async function cancelInvoice(tenantId: number, userId: number, originalId
     const year = Number(dt.y);
     const seq = await nextSeq(conn, tenantId, orig.premise_id, orig.device_id, year);
 
-    const [[premise]] = await conn.query<any[]>(`SELECT code FROM premises WHERE id = ?`, [orig.premise_id]);
-    const [[device]] = await conn.query<any[]>(`SELECT code FROM devices WHERE id = ?`, [orig.device_id]);
+    const [[premise]] = await conn.query<any[]>(
+      `SELECT code FROM premises WHERE id = ? AND tenant_id = ?`,
+      [orig.premise_id, tenantId],
+    );
+    const [[device]] = await conn.query<any[]>(
+      `SELECT code FROM devices WHERE id = ? AND tenant_id = ? AND premise_id = ?`,
+      [orig.device_id, tenantId, orig.premise_id],
+    );
+    if (!premise || !device) throw new InvoiceError(422, 'Nedostaje poslovni prostor ili naplatni uređaj.');
     const numberFull = `${seq}/${premise.code}/${device.code}`;
 
     const [[operator]] = await conn.query<any[]>(

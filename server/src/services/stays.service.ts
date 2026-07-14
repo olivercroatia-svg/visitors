@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import type { Issue } from '../evisitor/validation';
 import { hasErrors, validateCheckIn, validateCheckOut } from '../evisitor/validation';
+import { ownsGuest, ownsObject } from '../utils/ownership';
 import {
   dispatchStay,
   EVisitorError,
@@ -51,8 +52,8 @@ export async function listStays(
             CONCAT(g.first_name, ' ', g.last_name) AS guest_name, g.id AS guest_id,
             o.name AS object_name, o.id AS object_id
      FROM stays s
-     JOIN guests g ON g.id = s.guest_id
-     JOIN accommodation_objects o ON o.id = s.object_id
+     JOIN guests g ON g.id = s.guest_id AND g.tenant_id = s.tenant_id
+     JOIN accommodation_objects o ON o.id = s.object_id AND o.tenant_id = s.tenant_id
      WHERE ${where}
      ORDER BY s.check_in_at DESC, s.id DESC
      LIMIT 300`,
@@ -66,8 +67,8 @@ export async function getStay(tenantId: number, stayId: number) {
     `SELECT s.*, CONCAT(g.first_name, ' ', g.last_name) AS guest_name,
             o.name AS object_name, o.facility_code
      FROM stays s
-     JOIN guests g ON g.id = s.guest_id
-     JOIN accommodation_objects o ON o.id = s.object_id
+     JOIN guests g ON g.id = s.guest_id AND g.tenant_id = s.tenant_id
+     JOIN accommodation_objects o ON o.id = s.object_id AND o.tenant_id = s.tenant_id
      WHERE s.id = ? AND s.tenant_id = ? LIMIT 1`,
     [stayId, tenantId],
   );
@@ -277,6 +278,15 @@ export async function updateStay(tenantId: number, stayId: number, input: StayIn
   }
   if (stay.status === 'cancelled') {
     throw new EVisitorError(409, 'Prijava sa zadanim ID-jem je već poništena.');
+  }
+
+  // createStay gets this from validateStayInput; the edit path never had it, so a stay could
+  // be re-pointed at another tenant's object or guest and read back through the joins.
+  if (!(await ownsObject(tenantId, input.object_id))) {
+    throw new EVisitorError(404, 'Smještajni objekt nije pronađen.');
+  }
+  if (!(await ownsGuest(tenantId, input.guest_id))) {
+    throw new EVisitorError(404, 'Gost nije pronađen.');
   }
 
   await pool.query(

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
+import { ownsPremise } from '../utils/ownership';
 import { audit } from '../services/audit.service';
 
 // eVisitor accommodation objects (smještajni objekti). Not the fiscal `premises`.
@@ -34,6 +35,10 @@ objectsRouter.get('/', wrap(async (req, res) => {
 
 objectsRouter.post('/', wrap(async (req, res) => {
   const input = objectSchema.parse(req.body);
+  if (input.premise_id && !(await ownsPremise(req.auth!.tenantId, input.premise_id))) {
+    res.status(404).json({ error: 'Poslovni prostor nije pronađen.' });
+    return;
+  }
   try {
     const [result] = await pool.query<any>(
       `INSERT INTO accommodation_objects
@@ -62,6 +67,11 @@ objectsRouter.post('/', wrap(async (req, res) => {
 objectsRouter.put('/:id', wrap(async (req, res) => {
   const id = Number(req.params.id);
   const input = objectSchema.parse(req.body);
+  // The WHERE below scopes the row being updated, but not the premise_id coming in.
+  if (input.premise_id && !(await ownsPremise(req.auth!.tenantId, input.premise_id))) {
+    res.status(404).json({ error: 'Poslovni prostor nije pronađen.' });
+    return;
+  }
   const [result] = await pool.query<any>(
     `UPDATE accommodation_objects
      SET name = ?, facility_code = ?, premise_id = ?, municipality_id = ?, address = ?, city = ?,

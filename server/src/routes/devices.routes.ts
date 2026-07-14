@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireOwner } from '../middleware/auth';
 import { wrap } from '../utils/wrap';
+import { ownsPremise } from '../utils/ownership';
 import { audit } from '../services/audit.service';
 
 export const devicesRouter = Router();
@@ -21,16 +22,11 @@ const deviceSchema = z.object({
 
 const norm = (v?: string | null) => (v && String(v).trim() !== '' ? String(v).trim() : null);
 
-async function ownsPremise(tenantId: number, premiseId: number): Promise<boolean> {
-  const [[row]] = await pool.query<any[]>(
-    `SELECT id FROM premises WHERE id = ? AND tenant_id = ? LIMIT 1`,
-    [premiseId, tenantId],
-  );
-  return Boolean(row);
-}
-
+// device.code is the "URE" part of every invoice number, so who may change it is a fiscal
+// question, not a settings one. Devices are read through GET /premises, which stays open.
 devicesRouter.post(
   '/',
+  requireOwner,
   wrap(async (req, res) => {
     const input = deviceSchema.parse(req.body);
     if (!(await ownsPremise(req.auth!.tenantId, input.premise_id))) {
@@ -63,6 +59,7 @@ devicesRouter.post(
 
 devicesRouter.put(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const bodySchema = deviceSchema.pick({ code: true, label: true });
@@ -89,6 +86,7 @@ devicesRouter.put(
 
 devicesRouter.delete(
   '/:id',
+  requireOwner,
   wrap(async (req, res) => {
     const id = Number(req.params.id);
     const [result] = await pool.query<any>(

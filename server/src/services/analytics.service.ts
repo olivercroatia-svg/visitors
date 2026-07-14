@@ -71,7 +71,7 @@ export async function getAnalytics(tenantId: number, f: AnalyticsFilters) {
 
   const [byPremise] = await pool.query<any[]>(
     `SELECT p.name AS premise, p.code, COALESCE(SUM(i.total),0) AS revenue, COUNT(*) AS count
-     FROM invoices i JOIN premises p ON p.id = i.premise_id
+     FROM invoices i JOIN premises p ON p.id = i.premise_id AND p.tenant_id = i.tenant_id
      WHERE ${clause} GROUP BY i.premise_id ORDER BY revenue DESC`,
     params,
   );
@@ -94,7 +94,7 @@ export async function getAnalytics(tenantId: number, f: AnalyticsFilters) {
        COALESCE(i.guest_name_cache, NULLIF(TRIM(CONCAT(COALESCE(g.first_name,''),' ',COALESCE(g.last_name,''))),''), 'Krajnji potrošač') AS guest,
        COALESCE(SUM(i.total),0) AS revenue,
        COUNT(*) AS count
-     FROM invoices i LEFT JOIN guests g ON g.id = i.guest_id
+     FROM invoices i LEFT JOIN guests g ON g.id = i.guest_id AND g.tenant_id = i.tenant_id
      WHERE ${clause}
      GROUP BY guest ORDER BY revenue DESC LIMIT 10`,
     params,
@@ -102,7 +102,7 @@ export async function getAnalytics(tenantId: number, f: AnalyticsFilters) {
 
   const [byCountry] = await pool.query<any[]>(
     `SELECT COALESCE(g.country,'Nepoznato') AS country, COUNT(*) AS count, COALESCE(SUM(i.total),0) AS revenue
-     FROM invoices i JOIN guests g ON g.id = i.guest_id
+     FROM invoices i JOIN guests g ON g.id = i.guest_id AND g.tenant_id = i.tenant_id
      WHERE ${clause} GROUP BY country ORDER BY count DESC LIMIT 8`,
     params,
   );
@@ -136,7 +136,7 @@ export async function getFilteredInvoiceRows(tenantId: number, f: AnalyticsFilte
     `SELECT i.number_full, i.issue_date, i.guest_name_cache, p.code AS premise_code,
             i.payment_method, i.vat_applicable, i.subtotal, i.vat_total, i.total,
             CASE WHEN i.fiscal_status='confirmed' THEN i.jir ELSE '' END AS jir
-     FROM invoices i LEFT JOIN premises p ON p.id = i.premise_id
+     FROM invoices i LEFT JOIN premises p ON p.id = i.premise_id AND p.tenant_id = i.tenant_id
      WHERE ${clause} ORDER BY i.issue_datetime ASC`,
     params,
   );

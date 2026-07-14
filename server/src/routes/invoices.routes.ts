@@ -118,8 +118,13 @@ invoicesRouter.post(
   '/draft',
   wrap(async (req, res) => {
     const input = draftSchema.parse(req.body) as DraftInput;
-    const id = await createDraft(req.auth!.tenantId, req.auth!.userId, input);
-    res.status(201).json({ id });
+    try {
+      const id = await createDraft(req.auth!.tenantId, req.auth!.userId, input);
+      res.status(201).json({ id });
+    } catch (err) {
+      if (handleInvoiceError(err, res)) return;
+      throw err;
+    }
   }),
 );
 
@@ -173,9 +178,14 @@ invoicesRouter.post(
 invoicesRouter.post(
   '/:id/retry-fiscal',
   wrap(async (req, res) => {
-    await fiscalizeInvoice(req.auth!.tenantId, Number(req.params.id), 'fiscalize');
-    const invoice = await getInvoiceFull(req.auth!.tenantId, Number(req.params.id));
-    res.json(invoice);
+    try {
+      await fiscalizeInvoice(req.auth!.tenantId, Number(req.params.id), 'fiscalize');
+      const invoice = await getInvoiceFull(req.auth!.tenantId, Number(req.params.id));
+      res.json(invoice);
+    } catch (err) {
+      if (handleInvoiceError(err, res)) return;
+      throw err;
+    }
   }),
 );
 
