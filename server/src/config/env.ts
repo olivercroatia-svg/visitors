@@ -4,21 +4,44 @@ import path from 'path';
 // Load server/.env regardless of process cwd
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
-function required(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-  if (value === undefined) {
-    throw new Error(`Missing required environment variable: ${name}`);
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// The dev fallback is published in the repo, so anyone could mint a session token for any
+// tenant — including platformRole 'admin'. It is a convenience for local work and must never
+// be what a production deploy silently falls back to. Same rule as SECRETS_ENC_KEY in
+// utils/crypto.ts: a guessable secret is not a secret.
+function sessionSecret(): string {
+  const configured = process.env.JWT_SECRET?.trim();
+  if (configured) return configured;
+  if (IS_PROD) {
+    throw new Error(
+      'JWT_SECRET must be set in production — sessions signed with the dev fallback can be forged (openssl rand -hex 32).',
+    );
   }
-  return value;
+  return 'dev-secret-visitors-local-only';
+}
+
+// COOKIE_SECURE=false means the session cookie is sent over plain HTTP. In production that is
+// never a legitimate choice, and it is exactly what a .env copied from .env.example used to
+// carry — so refuse to start rather than silently serve an unprotected session. Off in dev by
+// default, where there is no TLS to be secure over.
+function cookieSecure(): boolean {
+  const configured = process.env.COOKIE_SECURE;
+  if (IS_PROD && configured === 'false') {
+    throw new Error(
+      'COOKIE_SECURE=false is not allowed in production — the session cookie would travel over plain HTTP. Remove it or set it to true.',
+    );
+  }
+  return configured ? configured === 'true' : IS_PROD;
 }
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
-  isProd: process.env.NODE_ENV === 'production',
+  isProd: IS_PROD,
   port: Number(process.env.PORT ?? 4000),
   clientUrl: process.env.CLIENT_URL ?? 'http://localhost:5173',
-  jwtSecret: required('JWT_SECRET', 'dev-secret-visitors-local-only'),
-  cookieSecure: process.env.COOKIE_SECURE === 'true',
+  jwtSecret: sessionSecret(),
+  cookieSecure: cookieSecure(),
   fiscalProvider: process.env.FISCAL_PROVIDER ?? 'mock',
   fiscalTestUrl:
     process.env.FISCAL_TEST_URL ?? 'https://cistest.apis-it.hr:8449/FiskalizacijaServiceTest',
