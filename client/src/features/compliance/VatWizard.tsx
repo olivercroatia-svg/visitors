@@ -41,6 +41,7 @@ export function VatWizard({
     <Modal
       open={open}
       onClose={onClose}
+      closeOnBackdrop={false}
       title="Promjena statusa u sustavu PDV-a"
       footer={
         <>

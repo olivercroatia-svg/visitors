@@ -225,6 +225,7 @@ function PremiseModal({ edit, onClose }: { edit?: Premise; onClose: () => void }
     <Modal
       open
       onClose={onClose}
+      closeOnBackdrop={false}
       title={edit ? 'Uredi prostor' : 'Novi poslovni prostor'}
       footer={
         <>
@@ -326,6 +327,7 @@ function DeviceModal({
     <Modal
       open
       onClose={onClose}
+      closeOnBackdrop={false}
       title={edit ? 'Uredi uređaj' : 'Novi naplatni uređaj'}
       footer={
         <>

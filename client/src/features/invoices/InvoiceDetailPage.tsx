@@ -245,6 +245,7 @@ export function InvoiceDetailPage() {
       <Modal
         open={stornoOpen}
         onClose={() => setStornoOpen(false)}
+        closeOnBackdrop={false}
         role="alertdialog"
         title="Storniranje računa"
         footer={

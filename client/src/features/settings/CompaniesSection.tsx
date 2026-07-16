@@ -171,6 +171,7 @@ export function CompanyModal({
     <Modal
       open
       onClose={onClose}
+      closeOnBackdrop={false}
       title={edit ? 'Uredi tvrtku' : 'Nova tvrtka'}
       footer={
         <>

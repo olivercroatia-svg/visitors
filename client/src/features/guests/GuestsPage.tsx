@@ -315,6 +315,7 @@ function GuestModal({ edit, onClose }: { edit?: Guest; onClose: () => void }) {
     <Modal
       open
       onClose={onClose}
+      closeOnBackdrop={false}
       title={edit ? 'Uredi gosta' : 'Novi gost'}
       footer={
         <>

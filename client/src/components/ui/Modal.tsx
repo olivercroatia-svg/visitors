@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Bottom sheet on mobile, centered dialog on desktop. Closes on Esc / backdrop.
+// Backdrop close is opt-out via closeOnBackdrop; Esc always closes.
 export function Modal({
   open,
   onClose,
@@ -11,6 +12,7 @@ export function Modal({
   children,
   footer,
   role = 'dialog',
+  closeOnBackdrop = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -18,6 +20,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   role?: 'dialog' | 'alertdialog';
+  // Forms pass false so a stray click outside can't discard half-typed input.
+  closeOnBackdrop?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -39,7 +43,10 @@ export function Modal({
       aria-modal="true"
       aria-label={title}
     >
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={closeOnBackdrop ? onClose : undefined}
+      />
       <div
         className={cn(
           'relative z-10 flex max-h-[92dvh] w-full flex-col bg-surface shadow-xl',

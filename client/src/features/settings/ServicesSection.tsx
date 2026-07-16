@@ -138,6 +138,7 @@ function ServiceModal({ edit, onClose }: { edit?: Service; onClose: () => void }
     <Modal
       open
       onClose={onClose}
+      closeOnBackdrop={false}
       title={edit ? 'Uredi uslugu' : 'Nova usluga'}
       footer={
         <>

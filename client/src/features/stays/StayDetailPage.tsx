@@ -174,6 +174,7 @@ export function StayDetailPage() {
       <Modal
         open={checkOutOpen}
         onClose={() => setCheckOutOpen(false)}
+        closeOnBackdrop={false}
         title="Odjava gosta"
         footer={
           <>

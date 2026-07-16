@@ -146,6 +146,7 @@ export function ObjectsSection() {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
+        closeOnBackdrop={false}
         title={editing ? 'Uredi objekt' : 'Novi smještajni objekt'}
         footer={
           <>
