@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import path from 'path';
+import { buildHub3Payload, renderHub3Png } from './hub3.service';
 
 const FONT_DIR = path.resolve(__dirname, '../../assets/fonts');
 const FONT_REGULAR = path.join(FONT_DIR, 'DejaVuSans.ttf');
@@ -206,6 +207,26 @@ export async function renderInvoicePdf(invoice: any, profile: Profile): Promise<
       doc.image(qrBuf, right - 90, y, { width: 90 });
     }
     y += 44;
+  }
+
+  // HUB-3 payment barcode (PDF417) — only for transakcijski invoices with an
+  // IBAN on the profile. Independent of fiscalization: a pending invoice is
+  // still payable. The fiscal QR sits at the right edge, so the left is free.
+  const hub3 = buildHub3Payload(invoice, profile);
+  if (hub3) {
+    y += 6;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#e0e6e3').stroke();
+    y += 10;
+    doc.font('b').fontSize(8.5).fillColor('#5c6b67').text('PLAĆANJE 2D BARKODOM (HUB-3)', left, y);
+    doc
+      .font('r')
+      .fontSize(8)
+      .fillColor('#8a9793')
+      .text('Skenirajte barkod u aplikaciji svoje banke.', left, y + 11);
+    // Spec size: 58 mm wide (~165 pt); the symbol's height follows from its content.
+    const hub3Png = await renderHub3Png(hub3);
+    doc.image(hub3Png, left, y + 24, { width: 165 });
+    y += 24 + 50;
   }
 
   // Footer note (anchored near the bottom, but inside the page margin so the
