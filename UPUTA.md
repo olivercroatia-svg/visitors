@@ -24,7 +24,7 @@ Ove upute vode vas korak po korak, od prvog dana do svakodnevnog rada.
 Prije prvog računa potrebno je ispuniti par podataka. Aplikacija vas kroz to vodi, a **izdavanje računa je zaključano dok profil nije potpun** — tako vas štitimo od računa s greškom.
 
 1. **Registracija** — unesite ime, naziv djelatnosti, email i lozinku te odaberite jeste li **privatni iznajmljivač** ili **paušalni obrt** i jeste li u sustavu PDV-a.
-2. **Podaci obrta** (Postavke → Obrt) — unesite **OIB** (provjeravamo ga automatski), adresu i mjesto poslovanja.
+2. **Podaci obrta** (Postavke → Obrt) — unesite **OIB** (provjeravamo ga automatski), adresu i mjesto poslovanja. Upišite i **IBAN (za uplate)** — ispisuje se na računu, a potreban je i za **barkod za plaćanje** (vidi Izdavanje računa).
 3. **Poslovni prostor i naplatni uređaj** (Postavke → Prostori) — dodajte barem jedan prostor (npr. oznaka `POSL1`) i jedan naplatni uređaj. Iz njih se slaže broj računa, npr. `1/POSL1/1`.
 4. **Usluge** (Postavke → Usluge) — spremite usluge koje najčešće naplaćujete (npr. „Noćenje"). Time ubrzavate unos računa.
 
@@ -48,6 +48,14 @@ Prije prvog računa potrebno je ispuniti par podataka. Aplikacija vas kroz to vo
 Nakon potvrde račun se **automatski fiskalizira** i dobiva **JIR** i **ZKI** te **QR kod** za provjeru. Račun možete **preuzeti kao PDF**.
 
 > ⚠️ **Važno:** Izdani račun se više ne može mijenjati. Ispravak je moguć isključivo **storniranjem** — tako nalaže zakon.
+
+### 💳 Barkod za plaćanje (HUB-3)
+
+Kad je način plaćanja **transakcijski račun**, PDF računa automatski dobiva i **HUB-3 2D barkod** — isti standard koji koriste hrvatske uplatnice. Gost ga skenira u aplikaciji svoje banke i nalog za plaćanje se **sam popuni**: vaš IBAN, iznos i opis s brojem računa. Bez prepisivanja i bez grešaka u uplati.
+
+Jedini uvjet: u **Postavke → Obrt** mora biti upisan vaš **IBAN**. Na računima plaćenim gotovinom ili karticom i na storno računima barkoda nema — tamo nema što platiti.
+
+> 💡 Ako su oznake prostora i naplatnog uređaja čisto brojčane (pa broj računa izgleda kao `7/1/1`), barkod nosi i **poziv na broj** izveden iz broja računa, pa uplatu lakše povežete s računom. S oznakama koje sadrže slova (npr. `POSL1`) uplata prolazi jednako — račun prepoznajete iz opisa plaćanja.
 
 ---
 
@@ -295,6 +303,7 @@ Klik na logo **Visitors** vas uvijek vraća na početni ekran. Na računalu i ta
 - **Kako dobiti certifikat?** Naručuje se kod FINA-e (ili drugog ovlaštenog izdavatelja) i mora glasiti na OIB vašeg obrta. Dobiveni **.p12** i njegovu lozinku unesete u **Postavke → Fiskalizacija**.
 - **Pogriješio sam na računu?** Ne brišite ga — **stornirajte** ga i izdajte novi.
 - **Gost traži da mu na računu pišu podaci firme?** Odaberite (ili dodajte) tvrtku u polju **Tvrtka** pri izradi računa. Podaci se ispisuju na PDF-u i pamte za sljedeći put.
+- **Na PDF-u nema barkoda za plaćanje?** Barkod se ispisuje samo za način plaćanja **transakcijski račun**, i tek kad je u **Postavke → Obrt** upisan **IBAN**.
 - **„Testiraj vezu" ne prolazi?** Provjerite jeste li odabrali pravu **okolinu** (testni podaci ne rade na Produkciji i obrnuto) i, na testnoj okolini, jeste li unijeli **API ključ**. Crveni okvir ispisuje poruku samog eVisitora — ona vam kaže što je odbijeno.
 - **Ne mogu odabrati kategoriju boravišne pristojbe?** Niste sinkronizirali šifrarnike: **Postavke → eVisitor → Sinkroniziraj šifrarnike**.
 - **Prijava stoji na „Na čekanju"?** To je normalno kad eVisitor ne odgovara. Aplikacija sama ponavlja slanje — ne morate ništa raditi.
